@@ -266,6 +266,7 @@ const dayC: WorkoutDay = {
 export const mockPlan: WorkoutPlan = {
   id: PLAN_ID,
   name: 'Plano EixoForma — Demonstração',
+  goal: 'Hipertrofia',
   origin: 'prescribed',
   createdByUserId: null,
   createdAt: PLAN_CREATED_AT,

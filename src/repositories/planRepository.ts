@@ -5,6 +5,7 @@ import type { SQLiteClient } from '@/database/sqliteClient';
 interface PlanRow {
   id: string;
   name: string;
+  goal: string | null;
   origin: string;
   created_by_user_id: string | null;
   created_at: string;
@@ -15,6 +16,7 @@ function toPlan(row: PlanRow): WorkoutPlan {
   return {
     id: row.id,
     name: row.name,
+    goal: row.goal,
     origin: row.origin as PlanOrigin,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
@@ -35,12 +37,12 @@ export async function getPlanById(client: SQLiteClient, planId: string): Promise
 /** Cria só a linha do plano — a versão 1 (draft) é responsabilidade do service, que coordena as duas escritas. */
 export async function insertPlan(
   client: SQLiteClient,
-  params: { id: string; name: string; origin: PlanOrigin; createdByUserId: string | null }
+  params: { id: string; name: string; goal: string | null; origin: PlanOrigin; createdByUserId: string | null }
 ): Promise<WorkoutPlan> {
   const now = new Date().toISOString();
   await client.runAsync(
-    'INSERT INTO workout_plans (id, name, origin, created_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?);',
-    [params.id, params.name, params.origin, params.createdByUserId, now, now]
+    'INSERT INTO workout_plans (id, name, goal, origin, created_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?);',
+    [params.id, params.name, params.goal, params.origin, params.createdByUserId, now, now]
   );
   const plan = await getPlanById(client, params.id);
   if (!plan) throw new Error('Falha ao criar plano.');

@@ -32,10 +32,11 @@ export async function seedDemoData(client: SQLiteClient): Promise<void> {
     }
 
     await client.runAsync(
-      'INSERT INTO workout_plans (id, name, origin, created_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?);',
+      'INSERT INTO workout_plans (id, name, goal, origin, created_by_user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?);',
       [
         mockPlan.id,
         mockPlan.name,
+        mockPlan.goal,
         mockPlan.origin,
         mockPlan.createdByUserId,
         mockPlan.createdAt,

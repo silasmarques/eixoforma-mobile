@@ -1,8 +1,12 @@
 import { getVersionByStatus } from '@/repositories/planVersionRepository';
 import { planService } from '@/services/planService';
 import { prescriptionService } from '@/services/prescriptionService';
-import { IncompletePlanVersionError } from '@/domain/prescriptionErrors';
-import { PLAN_ID } from '@/mocks/workoutPlanSeed';
+import {
+  DraftNotDiscardableError,
+  IncompletePlanVersionError,
+  ReadOnlyPlanError,
+} from '@/domain/prescriptionErrors';
+import { PLAN_ID, PLAN_VERSION_ID } from '@/mocks/workoutPlanSeed';
 import { setupTestDatabase } from '../support/setupTestDatabase';
 import { wrapWithRunFailureAfter } from '../support/failingClientWrapper';
 import type { SQLiteClient } from '@/database/sqliteClient';
@@ -153,5 +157,116 @@ describe('planService', () => {
 
   it('selectPlan rejeita planId inexistente', async () => {
     await expect(planService.selectPlan(client, 'plano_fantasma')).rejects.toThrow(/não encontrado/);
+  });
+
+  describe('resolveViewableVersion (não cria draft por visualização)', () => {
+    it('abrir os detalhes de um plano só active NÃO cria draft', async () => {
+      const before = await getVersionByStatus(client, PLAN_ID, 'draft');
+      expect(before).toBeNull();
+
+      const viewed = await planService.resolveViewableVersion(client, PLAN_ID);
+      expect(viewed?.id).toBe(PLAN_VERSION_ID);
+      expect(viewed?.status).toBe('active');
+
+      const after = await getVersionByStatus(client, PLAN_ID, 'draft');
+      expect(after).toBeNull(); // continua sem draft — só visualizar não muta nada
+    });
+
+    it('tocar em "Editar" (getEditableVersion) cria/reaproveita o draft — aí sim', async () => {
+      // com um plano personal já ativo (prescribed é somente leitura, nunca gera draft)
+      const { plan, draftVersion: v1 } = await planService.createPlan(client, {
+        name: 'Plano personal ativo',
+        origin: 'personal',
+      });
+      await buildMinimalDay(client, plan.id, 'Treino Único');
+      await planService.activatePlanVersion(client, { planId: plan.id, versionId: v1.id });
+
+      expect(await getVersionByStatus(client, plan.id, 'draft')).toBeNull();
+
+      const draft = await prescriptionService.getEditableVersion(client, plan.id);
+      expect(draft.status).toBe('draft');
+
+      const afterEdit = await getVersionByStatus(client, plan.id, 'draft');
+      expect(afterEdit?.id).toBe(draft.id);
+
+      // visualizar de novo agora mostra o draft (reflete a edição em curso)
+      const viewed = await planService.resolveViewableVersion(client, plan.id);
+      expect(viewed?.id).toBe(draft.id);
+    });
+
+    it('abrir os detalhes de um plano prescribed nunca cria draft (é sempre somente leitura)', async () => {
+      const viewed = await planService.resolveViewableVersion(client, PLAN_ID);
+      expect(viewed?.id).toBe(PLAN_VERSION_ID);
+      await expect(prescriptionService.getEditableVersion(client, PLAN_ID)).rejects.toBeInstanceOf(
+        ReadOnlyPlanError
+      );
+      expect(await getVersionByStatus(client, PLAN_ID, 'draft')).toBeNull();
+    });
+  });
+
+  describe('discardDraft', () => {
+    async function buildActivePlusDraft(client: SQLiteClient) {
+      const { plan, draftVersion: v1 } = await planService.createPlan(client, {
+        name: 'Plano com draft',
+        origin: 'personal',
+      });
+      await buildMinimalDay(client, plan.id, 'Treino V1');
+      await planService.activatePlanVersion(client, { planId: plan.id, versionId: v1.id });
+      const v2 = await prescriptionService.getEditableVersion(client, plan.id);
+      await prescriptionService.addDay(client, plan.id, {
+        order: 2,
+        name: 'Treino V2 extra',
+        description: '',
+        muscleGroups: ['back'],
+        weekdays: [],
+      });
+      return { plan, v1, v2 };
+    }
+
+    it('descarta o draft preservando a active intacta', async () => {
+      const { plan, v1 } = await buildActivePlusDraft(client);
+
+      await planService.discardDraft(client, plan.id);
+
+      expect(await getVersionByStatus(client, plan.id, 'draft')).toBeNull();
+      const active = await getVersionByStatus(client, plan.id, 'active');
+      expect(active?.id).toBe(v1.id);
+    });
+
+    it('o descarte remove toda a árvore do draft (dias, exercícios, séries)', async () => {
+      const { plan, v2 } = await buildActivePlusDraft(client);
+
+      await planService.discardDraft(client, plan.id);
+
+      const remainingDays = await client.getAllAsync(
+        'SELECT id FROM workout_days WHERE plan_version_id = ?;',
+        [v2.id]
+      );
+      expect(remainingDays).toEqual([]);
+      const remainingVersion = await getVersionByStatus(client, plan.id, 'draft');
+      expect(remainingVersion).toBeNull();
+    });
+
+    it('rejeita descartar quando não há draft', async () => {
+      const { plan } = await planService.createPlan(client, { name: 'Só ativo', origin: 'personal' });
+      await buildMinimalDay(client, plan.id, 'Único');
+      const v1 = await getVersionByStatus(client, plan.id, 'draft');
+      await planService.activatePlanVersion(client, { planId: plan.id, versionId: v1!.id });
+
+      await expect(planService.discardDraft(client, plan.id)).rejects.toBeInstanceOf(
+        DraftNotDiscardableError
+      );
+    });
+
+    it('rejeita descartar quando o plano nunca teve uma versão active (não é "descartar alterações", é outra operação)', async () => {
+      const { plan } = await planService.createPlan(client, { name: 'Novo, nunca ativado', origin: 'personal' });
+      await expect(planService.discardDraft(client, plan.id)).rejects.toBeInstanceOf(
+        DraftNotDiscardableError
+      );
+    });
+
+    it('rejeita descartar draft de plano prescribed', async () => {
+      await expect(planService.discardDraft(client, PLAN_ID)).rejects.toBeInstanceOf(ReadOnlyPlanError);
+    });
   });
 });

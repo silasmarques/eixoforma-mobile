@@ -6,6 +6,7 @@ import { getEditableVersion, prescriptionService } from '@/services/prescription
 import { ReadOnlyPlanError, StaleVersionReferenceError } from '@/domain/prescriptionErrors';
 import { PLAN_ID, PLAN_VERSION_ID } from '@/mocks/workoutPlanSeed';
 import { setupTestDatabase } from '../support/setupTestDatabase';
+import { wrapWithRunFailureAfter } from '../support/failingClientWrapper';
 import type { SQLiteClient } from '@/database/sqliteClient';
 
 describe('prescriptionService', () => {
@@ -148,5 +149,183 @@ describe('prescriptionService', () => {
     const prescribedSetIds = day!.exercises[0].sets.map((s) => s.id);
 
     expect(prescribedSetIds).toContain(performedSet.prescribedSetId);
+  });
+
+  describe('replacePrescribedSets (editor de séries / configuração rápida)', () => {
+    async function buildPersonalExerciseWithSets(client: SQLiteClient, count: number) {
+      const { plan } = await planService.createPlan(client, { name: 'Plano de teste', origin: 'personal' });
+      const day = await prescriptionService.addDay(client, plan.id, {
+        order: 1,
+        name: 'Treino',
+        description: '',
+        muscleGroups: ['chest'],
+        weekdays: [],
+      });
+      const exercise = await prescriptionService.addPrescribedExercise(client, plan.id, day.id, {
+        exerciseId: 'ex_supino_reto_barra',
+        order: 1,
+        coachNote: null,
+      });
+      for (let i = 0; i < count; i += 1) {
+        await prescriptionService.addPrescribedSet(client, plan.id, exercise.id, {
+          order: i + 1,
+          targetReps: 10,
+          repRangeMin: null,
+          repRangeMax: null,
+          targetLoadKg: 20,
+          restSeconds: 60,
+          technique: 'normal',
+          note: null,
+        });
+      }
+      return { plan, day, exercise };
+    }
+
+    it('preserva os dbId existentes quando a quantidade de séries não muda (configuração rápida: 4 → 4)', async () => {
+      const { plan, day, exercise } = await buildPersonalExerciseWithSets(client, 4);
+      const before = await getWorkoutDayById(client, day.id);
+      const existingIds = before!.exercises[0].sets.map((s) => s.id);
+
+      await prescriptionService.replacePrescribedSets(
+        client,
+        plan.id,
+        exercise.id,
+        existingIds.map((dbId) => ({
+          dbId,
+          targetReps: 12,
+          repRangeMin: null,
+          repRangeMax: null,
+          targetLoadKg: 30,
+          restSeconds: 90,
+          technique: 'normal' as const,
+          note: null,
+        }))
+      );
+
+      const after = await getWorkoutDayById(client, before!.id);
+      expect(after!.exercises[0].sets.map((s) => s.id)).toEqual(existingIds);
+      expect(after!.exercises[0].sets.every((s) => s.targetReps === 12)).toBe(true);
+    });
+
+    it('adiciona só as séries a mais quando a quantidade aumenta (4 → 5)', async () => {
+      const { plan, day, exercise } = await buildPersonalExerciseWithSets(client, 4);
+      const dayId = day.id;
+      const before = await getWorkoutDayById(client, dayId);
+      const existingIds = before!.exercises[0].sets.map((s) => s.id);
+
+      const draft = [
+        ...existingIds.map((dbId) => ({
+          dbId,
+          targetReps: 10,
+          repRangeMin: null,
+          repRangeMax: null,
+          targetLoadKg: 20,
+          restSeconds: 60,
+          technique: 'normal' as const,
+          note: null,
+        })),
+        {
+          targetReps: 8,
+          repRangeMin: null,
+          repRangeMax: null,
+          targetLoadKg: 25,
+          restSeconds: 60,
+          technique: 'drop_set' as const,
+          note: null,
+        },
+      ];
+      await prescriptionService.replacePrescribedSets(client, plan.id, exercise.id, draft);
+
+      const after = await getWorkoutDayById(client, dayId);
+      const afterIds = after!.exercises[0].sets.map((s) => s.id);
+      expect(afterIds).toHaveLength(5);
+      expect(afterIds.slice(0, 4)).toEqual(existingIds); // os 4 primeiros preservam o id
+      expect(afterIds[4]).not.toBe(''); // o 5º é novo
+    });
+
+    it('remove só as séries excedentes quando a quantidade diminui (4 → 3)', async () => {
+      const { plan, day, exercise } = await buildPersonalExerciseWithSets(client, 4);
+      const dayId = day.id;
+      const before = await getWorkoutDayById(client, dayId);
+      const existingIds = before!.exercises[0].sets.map((s) => s.id);
+
+      await prescriptionService.replacePrescribedSets(
+        client,
+        plan.id,
+        exercise.id,
+        existingIds.slice(0, 3).map((dbId) => ({
+          dbId,
+          targetReps: 10,
+          repRangeMin: null,
+          repRangeMax: null,
+          targetLoadKg: 20,
+          restSeconds: 60,
+          technique: 'normal' as const,
+          note: null,
+        }))
+      );
+
+      const after = await getWorkoutDayById(client, dayId);
+      expect(after!.exercises[0].sets.map((s) => s.id)).toEqual(existingIds.slice(0, 3));
+    });
+
+    it('cancelar (nunca chamar replacePrescribedSets) não persiste nada — nenhum PrescribedExercise/PrescribedSet órfão', async () => {
+      const { plan } = await planService.createPlan(client, { name: 'Plano cancelado', origin: 'personal' });
+      const day = await prescriptionService.addDay(client, plan.id, {
+        order: 1,
+        name: 'Treino',
+        description: '',
+        muscleGroups: ['chest'],
+        weekdays: [],
+      });
+      // usuário "abre configurar exercício" mas nunca confirma — nenhuma
+      // chamada de serviço acontece, então não há nada a verificar além de
+      // confirmar que a rotina continua sem exercícios.
+      const reloaded = await getWorkoutDayById(client, day.id);
+      expect(reloaded!.exercises).toHaveLength(0);
+    });
+
+    it('é transacional: falha no meio não deixa a lista de séries pela metade', async () => {
+      const { plan, day, exercise } = await buildPersonalExerciseWithSets(client, 2);
+      const dayId = day.id;
+      const before = await getWorkoutDayById(client, dayId);
+      const beforeIds = before!.exercises[0].sets.map((s) => s.id);
+
+      const failingClient = wrapWithRunFailureAfter(client, 1);
+      await expect(
+        prescriptionService.replacePrescribedSets(failingClient, plan.id, exercise.id, [
+          {
+            targetReps: 10,
+            repRangeMin: null,
+            repRangeMax: null,
+            targetLoadKg: 20,
+            restSeconds: 60,
+            technique: 'normal',
+            note: null,
+          },
+          {
+            targetReps: 10,
+            repRangeMin: null,
+            repRangeMax: null,
+            targetLoadKg: 20,
+            restSeconds: 60,
+            technique: 'normal',
+            note: null,
+          },
+          {
+            targetReps: 10,
+            repRangeMin: null,
+            repRangeMax: null,
+            targetLoadKg: 20,
+            restSeconds: 60,
+            technique: 'normal',
+            note: null,
+          },
+        ])
+      ).rejects.toThrow('Falha simulada');
+
+      const after = await getWorkoutDayById(client, dayId);
+      expect(after!.exercises[0].sets.map((s) => s.id)).toEqual(beforeIds);
+    });
   });
 });

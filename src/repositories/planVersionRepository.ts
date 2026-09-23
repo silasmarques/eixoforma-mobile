@@ -211,6 +211,36 @@ export async function createDraftFromVersion(
   return draft;
 }
 
+/**
+ * Apaga a árvore inteira de uma versão (weekdays, séries, exercícios, dias)
+ * e a própria linha da versão, atomicamente. Puramente mecânico — quem
+ * decide SE isso pode acontecer (só draft, plano personal, active já
+ * existe) é `planService.discardDraft`.
+ */
+export async function discardDraftVersion(client: SQLiteClient, versionId: string): Promise<void> {
+  await client.withTransactionAsync(async () => {
+    const dayRows = await client.getAllAsync<{ id: string }>(
+      'SELECT id FROM workout_days WHERE plan_version_id = ?;',
+      [versionId]
+    );
+    for (const dayRow of dayRows) {
+      const exerciseRows = await client.getAllAsync<{ id: string }>(
+        'SELECT id FROM prescribed_exercises WHERE day_id = ?;',
+        [dayRow.id]
+      );
+      for (const exerciseRow of exerciseRows) {
+        await client.runAsync('DELETE FROM prescribed_sets WHERE prescribed_exercise_id = ?;', [
+          exerciseRow.id,
+        ]);
+      }
+      await client.runAsync('DELETE FROM prescribed_exercises WHERE day_id = ?;', [dayRow.id]);
+      await client.runAsync('DELETE FROM workout_day_weekdays WHERE day_id = ?;', [dayRow.id]);
+      await client.runAsync('DELETE FROM workout_days WHERE id = ?;', [dayRow.id]);
+    }
+    await client.runAsync('DELETE FROM workout_plan_versions WHERE id = ?;', [versionId]);
+  });
+}
+
 export async function activateVersion(client: SQLiteClient, versionId: string): Promise<void> {
   await client.runAsync(
     "UPDATE workout_plan_versions SET status = 'active', activated_at = ? WHERE id = ?;",

@@ -1,14 +1,21 @@
 import {
+  duplicateDay,
   getPrescribedExerciseDetail,
   getWorkoutDayById,
   getWorkoutDaySummaries,
+  reorderDays,
+  reorderPrescribedExercises,
+  reorderPrescribedSets,
 } from '@/repositories/workoutPlanRepository';
 import { completeSession, createSession } from '@/repositories/workoutSessionRepository';
+import { ReorderValidationError } from '@/domain/prescriptionErrors';
 import { PLAN_ID, PLAN_VERSION_ID, mockWorkoutDays } from '@/mocks/workoutPlanSeed';
 import { setupTestDatabase } from '../support/setupTestDatabase';
 import type { SQLiteClient } from '@/database/sqliteClient';
 
 const DAY_A = 'day_treino_a';
+const DAY_B = 'day_treino_b';
+const DAY_C = 'day_treino_c';
 
 describe('workoutPlanRepository', () => {
   let client: SQLiteClient;
@@ -122,5 +129,102 @@ describe('workoutPlanRepository', () => {
 
     const summaries = await getWorkoutDaySummaries(client, PLAN_VERSION_ID);
     expect(summaries.every((s) => s.planId === PLAN_ID)).toBe(true);
+  });
+
+  describe('reorderDays', () => {
+    it('aceita uma permutação válida e normaliza para 1..N', async () => {
+      await reorderDays(client, PLAN_VERSION_ID, [DAY_C, DAY_A, DAY_B]);
+      const summaries = await getWorkoutDaySummaries(client, PLAN_VERSION_ID);
+      const orderById = Object.fromEntries(summaries.map((s) => [s.id, s.order]));
+      expect(orderById[DAY_C]).toBe(1);
+      expect(orderById[DAY_A]).toBe(2);
+      expect(orderById[DAY_B]).toBe(3);
+    });
+
+    it('rejeita id duplicado', async () => {
+      await expect(
+        reorderDays(client, PLAN_VERSION_ID, [DAY_A, DAY_A, DAY_B])
+      ).rejects.toBeInstanceOf(ReorderValidationError);
+    });
+
+    it('rejeita array incompleto (id ausente)', async () => {
+      await expect(reorderDays(client, PLAN_VERSION_ID, [DAY_A, DAY_B])).rejects.toBeInstanceOf(
+        ReorderValidationError
+      );
+    });
+
+    it('rejeita id de outro pai (estrangeiro)', async () => {
+      await expect(
+        reorderDays(client, PLAN_VERSION_ID, [DAY_A, DAY_B, 'id_que_nao_existe'])
+      ).rejects.toBeInstanceOf(ReorderValidationError);
+    });
+
+    it('reorder nunca funciona como delete — uma tentativa rejeitada não altera nada', async () => {
+      const before = await getWorkoutDaySummaries(client, PLAN_VERSION_ID);
+      await expect(reorderDays(client, PLAN_VERSION_ID, [DAY_A, DAY_B])).rejects.toThrow();
+      const after = await getWorkoutDaySummaries(client, PLAN_VERSION_ID);
+      expect(after).toHaveLength(before.length);
+    });
+  });
+
+  describe('reorderPrescribedExercises / reorderPrescribedSets', () => {
+    it('reordena exercícios de um dia normalizando 1..N', async () => {
+      const day = await getWorkoutDayById(client, DAY_A);
+      const ids = day!.exercises.map((e) => e.id);
+      const swapped = [ids[1], ids[0], ...ids.slice(2)];
+
+      await reorderPrescribedExercises(client, DAY_A, swapped);
+
+      const reloaded = await getWorkoutDayById(client, DAY_A);
+      expect(reloaded!.exercises.map((e) => e.id)).toEqual(swapped);
+      expect(reloaded!.exercises.map((e) => e.order)).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it('rejeita reorder de exercícios com id de outro dia', async () => {
+      const dayB = await getWorkoutDayById(client, DAY_B);
+      await expect(
+        reorderPrescribedExercises(client, DAY_A, [dayB!.exercises[0].id])
+      ).rejects.toBeInstanceOf(ReorderValidationError);
+    });
+
+    it('reordena séries de um exercício normalizando 1..N', async () => {
+      const day = await getWorkoutDayById(client, DAY_A);
+      const sets = day!.exercises[0].sets;
+      const reversed = [...sets].reverse().map((s) => s.id);
+
+      await reorderPrescribedSets(client, day!.exercises[0].id, reversed);
+
+      const reloaded = await getWorkoutDayById(client, DAY_A);
+      expect(reloaded!.exercises[0].sets.map((s) => s.id)).toEqual(reversed);
+      expect(reloaded!.exercises[0].sets.map((s) => s.order)).toEqual([1, 2, 3, 4]);
+    });
+  });
+
+  describe('duplicateDay', () => {
+    it('copia a rotina inteira (exercícios, séries, weekdays) com ids novos ao final da lista', async () => {
+      const original = await getWorkoutDayById(client, DAY_A);
+      const duplicated = await duplicateDay(client, DAY_A);
+
+      expect(duplicated.id).not.toBe(DAY_A);
+      expect(duplicated.name).toBe('Treino A (cópia)');
+      expect(duplicated.order).toBe(4); // ao final dos 3 dias existentes
+      expect(duplicated.weekdays).toEqual(original!.weekdays);
+      expect(duplicated.exercises).toHaveLength(original!.exercises.length);
+      expect(duplicated.exercises[0].id).not.toBe(original!.exercises[0].id);
+      expect(duplicated.exercises[0].sets).toHaveLength(original!.exercises[0].sets.length);
+      expect(duplicated.exercises[0].sets[0].id).not.toBe(original!.exercises[0].sets[0].id);
+
+      // a original continua intacta
+      const originalAfter = await getWorkoutDayById(client, DAY_A);
+      expect(originalAfter).toEqual(original);
+    });
+
+    it('editar a cópia não afeta a rotina original', async () => {
+      const duplicated = await duplicateDay(client, DAY_A);
+      await client.runAsync('UPDATE workout_days SET name = ? WHERE id = ?;', ['Editado', duplicated.id]);
+
+      const original = await getWorkoutDayById(client, DAY_A);
+      expect(original?.name).toBe('Treino A');
+    });
   });
 });

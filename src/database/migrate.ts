@@ -5,6 +5,7 @@ import { migration004Up } from './migrations/004_workout_day_weekdays';
 import { migration005Up } from './migrations/005_exercise_taxonomy';
 import { migration006Up } from './migrations/006_session_prescription_snapshot';
 import { migration007Up } from './migrations/007_app_preferences';
+import { migration008Up } from './migrations/008_plan_goal';
 import type { SQLiteClient } from './sqliteClient';
 
 interface Migration {
@@ -23,6 +24,7 @@ const migrations: Migration[] = [
   { version: 5, up: migration005Up },
   { version: 6, up: migration006Up },
   { version: 7, up: migration007Up },
+  { version: 8, up: migration008Up },
 ];
 
 export const CURRENT_SCHEMA_VERSION = migrations[migrations.length - 1].version;

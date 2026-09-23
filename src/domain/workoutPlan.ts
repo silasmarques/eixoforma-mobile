@@ -8,6 +8,7 @@ export type WorkoutPlanVersionStatus = 'draft' | 'active' | 'superseded';
 export interface WorkoutPlan {
   id: string;
   name: string;
+  goal: string | null;
   origin: PlanOrigin;
   createdByUserId: string | null;
   createdAt: string;

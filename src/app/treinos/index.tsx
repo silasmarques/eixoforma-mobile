@@ -2,20 +2,22 @@ import { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { EmptyState } from '@/components/EmptyState';
+import { PrimaryButton } from '@/components/PrimaryButton';
+import { RotinaCard } from '@/components/RotinaCard';
 import { Screen } from '@/components/Screen';
-import { Tag } from '@/components/Tag';
 import { useDatabase } from '@/database/DatabaseProvider';
 import { planService } from '@/services/planService';
 import { workoutPlanService } from '@/services/workoutPlanService';
-import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
-import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
-import type { WorkoutDaySummary , WorkoutPlan } from '@/domain/workoutPlan';
+import { colors, spacing, typography } from '@/theme/tokens';
+import type { WorkoutDaySummary, WorkoutPlan } from '@/domain/workoutPlan';
 
 export default function MeusTreinosScreen() {
   const client = useDatabase();
   const router = useRouter();
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [days, setDays] = useState<WorkoutDaySummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -25,16 +27,21 @@ export default function MeusTreinosScreen() {
         setPlan(selectedPlan);
         if (!selectedPlan) {
           setDays([]);
+          setLoaded(true);
           return;
         }
         const activeVersion = await planService.getActiveVersion(client, selectedPlan.id);
         if (cancelled) return;
         if (!activeVersion) {
           setDays([]);
+          setLoaded(true);
           return;
         }
         const result = await workoutPlanService.getWorkoutDaySummaries(client, activeVersion.id);
-        if (!cancelled) setDays(result);
+        if (!cancelled) {
+          setDays(result);
+          setLoaded(true);
+        }
       });
       return () => {
         cancelled = true;
@@ -42,68 +49,81 @@ export default function MeusTreinosScreen() {
     }, [client])
   );
 
+  if (!loaded) {
+    return (
+      <Screen>
+        <Text style={styles.meta}>Carregando…</Text>
+      </Screen>
+    );
+  }
+
   if (!plan) {
     return (
       <Screen>
-        <Text style={styles.meta}>Nenhum plano disponível ainda.</Text>
+        <EmptyState
+          title="Nenhum plano disponível ainda"
+          description="Crie seu primeiro plano de treino pra começar."
+          actionLabel="+ Novo plano"
+          onAction={() => router.push('/planos/novo')}
+        />
       </Screen>
     );
   }
 
   return (
     <Screen>
-      <Text style={styles.planLabel}>Plano atual</Text>
-      <Text style={styles.planName}>{plan.name}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Trocar plano"
+        onPress={() => router.push('/planos/selecionar')}
+        style={styles.planSelector}
+      >
+        <View>
+          <Text style={styles.planLabel}>Plano atual</Text>
+          <Text style={styles.planName}>{plan.name}</Text>
+        </View>
+        <Text style={styles.planSelectorChevron}>▾</Text>
+      </Pressable>
 
-      {days.map((day) => (
-        <Pressable
-          key={day.id}
-          accessibilityRole="button"
-          accessibilityLabel={`Abrir ${day.name}`}
-          hitSlop={8}
-          style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
-          onPress={() => router.push(`/treinos/${day.id}`)}
-        >
-          <View style={styles.header}>
-            <Text style={styles.title}>{day.name}</Text>
-            <Text style={styles.chevron}>›</Text>
-          </View>
-          <View style={styles.tagRow}>
-            {day.muscleGroups.map((group) => (
-              <Tag key={group} label={MUSCLE_GROUP_LABELS[group]} />
-            ))}
-          </View>
-          <Text style={styles.meta}>
-            {day.exerciseCount} exercícios · ~{day.estimatedDurationMinutes} min
-          </Text>
-          <Text style={styles.metaMuted}>
-            {day.lastPerformedAt
-              ? `Última vez: ${new Date(day.lastPerformedAt).toLocaleDateString('pt-BR')}`
-              : 'Ainda não realizado'}
-          </Text>
-        </Pressable>
-      ))}
+      <PrimaryButton label="+ Novo plano" variant="secondary" onPress={() => router.push('/planos/novo')} />
+
+      {days.length === 0 ? (
+        <EmptyState
+          title="Este plano ainda não tem rotinas ativas"
+          description="Gerencie o plano para adicionar rotinas."
+          actionLabel="Gerenciar planos"
+          onAction={() => router.push('/planos')}
+        />
+      ) : (
+        days.map((day) => (
+          <RotinaCard
+            key={day.id}
+            name={day.name}
+            muscleGroups={day.muscleGroups}
+            weekdays={day.weekdays}
+            exerciseCount={day.exerciseCount}
+            readOnly
+            onPress={() => router.push(`/treinos/${day.id}`)}
+          />
+        ))
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  planLabel: { ...typography.caption, color: colors.textMuted },
-  planName: { ...typography.title, color: colors.textPrimary },
-  card: {
+  meta: { ...typography.body, color: colors.textSecondary },
+  planSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.md,
-    gap: spacing.xs,
-    minHeight: minTouchTarget * 2,
   },
-  cardPressed: { opacity: 0.85 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { ...typography.title, color: colors.textPrimary },
-  chevron: { ...typography.title, color: colors.textMuted },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  meta: { ...typography.body, color: colors.textSecondary },
-  metaMuted: { ...typography.caption, color: colors.textMuted },
+  planLabel: { ...typography.caption, color: colors.textMuted },
+  planName: { ...typography.subtitle, color: colors.textPrimary },
+  planSelectorChevron: { ...typography.title, color: colors.textMuted },
 });

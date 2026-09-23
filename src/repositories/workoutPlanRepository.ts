@@ -7,6 +7,7 @@ import type {
 } from '@/domain/workoutPlan';
 import type { Exercise } from '@/domain/exercise';
 import type { MuscleGroup } from '@/domain/muscleGroup';
+import { ReorderValidationError } from '@/domain/prescriptionErrors';
 import type { Technique } from '@/domain/technique';
 import type { SQLiteClient } from '@/database/sqliteClient';
 import { getExerciseById } from './exerciseRepository';
@@ -472,4 +473,180 @@ export async function updatePrescribedSet(
 
 export async function removePrescribedSet(client: SQLiteClient, prescribedSetId: string): Promise<void> {
   await client.runAsync('DELETE FROM prescribed_sets WHERE id = ?;', [prescribedSetId]);
+}
+
+// ---------------------------------------------------------------------------
+// Reorder — valida permutação completa antes de persistir; nunca funciona
+// como delete (ids ausentes do array são rejeitados, não removidos).
+// ---------------------------------------------------------------------------
+
+/**
+ * `orderedIds` precisa ser exatamente uma permutação de `currentIds`: mesmo
+ * tamanho, sem duplicatas, todos pertencentes ao pai. Como tamanho e
+ * pertencimento já garantem isso, não sobra espaço para "faltar" um id.
+ */
+function validatePermutation(currentIds: string[], orderedIds: string[]): void {
+  if (orderedIds.length !== currentIds.length) {
+    throw new ReorderValidationError(
+      `esperado ${currentIds.length} ids, recebido ${orderedIds.length} — reorder não pode funcionar como delete.`
+    );
+  }
+  const currentSet = new Set(currentIds);
+  const seen = new Set<string>();
+  for (const id of orderedIds) {
+    if (!currentSet.has(id)) {
+      throw new ReorderValidationError(`id não pertence a este pai: ${id}`);
+    }
+    if (seen.has(id)) {
+      throw new ReorderValidationError(`id duplicado: ${id}`);
+    }
+    seen.add(id);
+  }
+}
+
+export async function reorderDays(
+  client: SQLiteClient,
+  planVersionId: string,
+  orderedDayIds: string[]
+): Promise<void> {
+  const currentRows = await client.getAllAsync<{ id: string }>(
+    'SELECT id FROM workout_days WHERE plan_version_id = ?;',
+    [planVersionId]
+  );
+  validatePermutation(
+    currentRows.map((r) => r.id),
+    orderedDayIds
+  );
+
+  await client.withTransactionAsync(async () => {
+    for (let i = 0; i < orderedDayIds.length; i += 1) {
+      await client.runAsync('UPDATE workout_days SET "order" = ? WHERE id = ?;', [i + 1, orderedDayIds[i]]);
+    }
+  });
+}
+
+export async function reorderPrescribedExercises(
+  client: SQLiteClient,
+  dayId: string,
+  orderedIds: string[]
+): Promise<void> {
+  const currentRows = await client.getAllAsync<{ id: string }>(
+    'SELECT id FROM prescribed_exercises WHERE day_id = ?;',
+    [dayId]
+  );
+  validatePermutation(
+    currentRows.map((r) => r.id),
+    orderedIds
+  );
+
+  await client.withTransactionAsync(async () => {
+    for (let i = 0; i < orderedIds.length; i += 1) {
+      await client.runAsync('UPDATE prescribed_exercises SET "order" = ? WHERE id = ?;', [i + 1, orderedIds[i]]);
+    }
+  });
+}
+
+export async function reorderPrescribedSets(
+  client: SQLiteClient,
+  prescribedExerciseId: string,
+  orderedIds: string[]
+): Promise<void> {
+  const currentRows = await client.getAllAsync<{ id: string }>(
+    'SELECT id FROM prescribed_sets WHERE prescribed_exercise_id = ?;',
+    [prescribedExerciseId]
+  );
+  validatePermutation(
+    currentRows.map((r) => r.id),
+    orderedIds
+  );
+
+  await client.withTransactionAsync(async () => {
+    for (let i = 0; i < orderedIds.length; i += 1) {
+      await client.runAsync('UPDATE prescribed_sets SET "order" = ? WHERE id = ?;', [i + 1, orderedIds[i]]);
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Duplicar rotina — copia um WorkoutDay inteiro (weekdays, exercícios,
+// séries) dentro da MESMA versão, com ids novos, ao final da lista.
+// ---------------------------------------------------------------------------
+
+export async function duplicateDay(client: SQLiteClient, dayId: string): Promise<WorkoutDay> {
+  const source = await client.getFirstAsync<DayRow>('SELECT * FROM workout_days WHERE id = ?;', [dayId]);
+  if (!source) throw new Error(`Dia não encontrado: ${dayId}`);
+
+  const siblingCount = await client.getFirstAsync<{ count: number }>(
+    'SELECT COUNT(*) as count FROM workout_days WHERE plan_version_id = ?;',
+    [source.plan_version_id]
+  );
+  const newOrder = (siblingCount?.count ?? 0) + 1;
+  const newDayId = generateId('day');
+
+  await client.withTransactionAsync(async () => {
+    await client.runAsync(
+      `INSERT INTO workout_days (id, plan_id, plan_version_id, "order", name, description, muscle_groups)
+       VALUES (?, (SELECT plan_id FROM workout_plan_versions WHERE id = ?), ?, ?, ?, ?, ?);`,
+      [
+        newDayId,
+        source.plan_version_id,
+        source.plan_version_id,
+        newOrder,
+        `${source.name} (cópia)`,
+        source.description,
+        source.muscle_groups,
+      ]
+    );
+
+    const weekdayRows = await client.getAllAsync<{ weekday: number }>(
+      'SELECT weekday FROM workout_day_weekdays WHERE day_id = ?;',
+      [dayId]
+    );
+    for (const weekdayRow of weekdayRows) {
+      await client.runAsync('INSERT INTO workout_day_weekdays (day_id, weekday) VALUES (?, ?);', [
+        newDayId,
+        weekdayRow.weekday,
+      ]);
+    }
+
+    const exerciseRows = await client.getAllAsync<PrescribedExerciseRow>(
+      'SELECT * FROM prescribed_exercises WHERE day_id = ? ORDER BY "order";',
+      [dayId]
+    );
+    for (const exerciseRow of exerciseRows) {
+      const newExerciseId = generateId('pex');
+      await client.runAsync(
+        'INSERT INTO prescribed_exercises (id, day_id, exercise_id, "order", coach_note) VALUES (?, ?, ?, ?, ?);',
+        [newExerciseId, newDayId, exerciseRow.exercise_id, exerciseRow.order, exerciseRow.coach_note]
+      );
+
+      const setRows = await client.getAllAsync<PrescribedSetRow>(
+        'SELECT * FROM prescribed_sets WHERE prescribed_exercise_id = ? ORDER BY "order";',
+        [exerciseRow.id]
+      );
+      for (const setRow of setRows) {
+        await client.runAsync(
+          `INSERT INTO prescribed_sets
+            (id, prescribed_exercise_id, "order", target_reps, rep_range_min, rep_range_max, target_load_kg, rest_seconds, technique, note)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          [
+            generateId('pset'),
+            newExerciseId,
+            setRow.order,
+            setRow.target_reps,
+            setRow.rep_range_min,
+            setRow.rep_range_max,
+            setRow.target_load_kg,
+            setRow.rest_seconds,
+            setRow.technique,
+            setRow.note,
+          ]
+        );
+      }
+    }
+  });
+
+  const duplicated = await getWorkoutDayById(client, newDayId);
+  if (!duplicated) throw new Error('Falha ao duplicar rotina.');
+  return duplicated;
 }

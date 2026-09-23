@@ -5,11 +5,15 @@ import {
   addPrescribedExercise as repoAddPrescribedExercise,
   addPrescribedSet as repoAddPrescribedSet,
   dayBelongsToVersion,
+  duplicateDay as repoDuplicateDay,
   prescribedExerciseBelongsToVersion,
   prescribedSetBelongsToVersion,
   removeDay as repoRemoveDay,
   removePrescribedExercise as repoRemovePrescribedExercise,
   removePrescribedSet as repoRemovePrescribedSet,
+  reorderDays as repoReorderDays,
+  reorderPrescribedExercises as repoReorderPrescribedExercises,
+  reorderPrescribedSets as repoReorderPrescribedSets,
   setDayWeekdays as repoSetDayWeekdays,
   updateDay as repoUpdateDay,
   updatePrescribedExercise as repoUpdatePrescribedExercise,
@@ -22,8 +26,21 @@ import {
   type UpdatePrescribedSetInput,
 } from '@/repositories/workoutPlanRepository';
 import { InvalidPlanStateError, ReadOnlyPlanError, StaleVersionReferenceError } from '@/domain/prescriptionErrors';
+import type { Technique } from '@/domain/technique';
 import type { WorkoutPlanVersion } from '@/domain/workoutPlan';
 import type { SQLiteClient } from '@/database/sqliteClient';
+
+/** Uma série no editor local — `dbId` presente = já existe no banco (update); ausente = nova (create). */
+export interface PrescribedSetDraftInput {
+  dbId?: string;
+  targetReps: number | null;
+  repRangeMin: number | null;
+  repRangeMax: number | null;
+  targetLoadKg: number | null;
+  restSeconds: number;
+  technique: Technique;
+  note: string | null;
+}
 
 /**
  * Ponto único de decisão de política de versionamento — toda escrita de
@@ -144,5 +161,75 @@ export const prescriptionService = {
   async removePrescribedSet(client: SQLiteClient, planId: string, prescribedSetId: string) {
     await assertPrescribedSetEditable(client, planId, prescribedSetId);
     await repoRemovePrescribedSet(client, prescribedSetId);
+  },
+
+  async reorderDays(client: SQLiteClient, planId: string, orderedDayIds: string[]) {
+    const version = await getEditableVersion(client, planId);
+    await repoReorderDays(client, version.id, orderedDayIds);
+  },
+
+  async reorderPrescribedExercises(
+    client: SQLiteClient,
+    planId: string,
+    dayId: string,
+    orderedIds: string[]
+  ) {
+    await assertDayEditable(client, planId, dayId);
+    await repoReorderPrescribedExercises(client, dayId, orderedIds);
+  },
+
+  async reorderPrescribedSets(
+    client: SQLiteClient,
+    planId: string,
+    prescribedExerciseId: string,
+    orderedIds: string[]
+  ) {
+    await assertPrescribedExerciseEditable(client, planId, prescribedExerciseId);
+    await repoReorderPrescribedSets(client, prescribedExerciseId, orderedIds);
+  },
+
+  async duplicateDay(client: SQLiteClient, planId: string, dayId: string) {
+    await assertDayEditable(client, planId, dayId);
+    return repoDuplicateDay(client, dayId);
+  },
+
+  /**
+   * Único caminho de escrita do editor de séries: diff transacional contra o
+   * que já existe. `dbId` presente → update; ausente → create; ids do banco
+   * que não aparecem mais no array recebido → delete. Ordem final é sempre
+   * a posição no array (1..N) — cobre reorder, criação e remoção de uma vez.
+   */
+  async replacePrescribedSets(
+    client: SQLiteClient,
+    planId: string,
+    prescribedExerciseId: string,
+    sets: PrescribedSetDraftInput[]
+  ) {
+    await assertPrescribedExerciseEditable(client, planId, prescribedExerciseId);
+
+    const currentRows = await client.getAllAsync<{ id: string }>(
+      'SELECT id FROM prescribed_sets WHERE prescribed_exercise_id = ?;',
+      [prescribedExerciseId]
+    );
+    const currentIds = currentRows.map((row) => row.id);
+    const suppliedIds = new Set(sets.filter((s) => s.dbId).map((s) => s.dbId as string));
+
+    await client.withTransactionAsync(async () => {
+      for (const id of currentIds) {
+        if (!suppliedIds.has(id)) {
+          await repoRemovePrescribedSet(client, id);
+        }
+      }
+
+      for (let i = 0; i < sets.length; i += 1) {
+        const set = sets[i];
+        const order = i + 1;
+        if (set.dbId) {
+          await repoUpdatePrescribedSet(client, set.dbId, { ...set, order });
+        } else {
+          await repoAddPrescribedSet(client, { ...set, prescribedExerciseId, order });
+        }
+      }
+    });
   },
 };

@@ -29,3 +29,19 @@ export class IncompletePlanVersionError extends Error {
     this.name = 'IncompletePlanVersionError';
   }
 }
+
+/** orderedIds de um reorder não é uma permutação completa dos filhos atuais do pai. */
+export class ReorderValidationError extends Error {
+  constructor(reason: string) {
+    super(`Reorder inválido: ${reason}`);
+    this.name = 'ReorderValidationError';
+  }
+}
+
+/** discardDraftVersion chamado numa versão que não é um draft descartável (ex.: é a única versão do plano, ou não é draft). */
+export class DraftNotDiscardableError extends Error {
+  constructor(reason: string) {
+    super(`Não é possível descartar: ${reason}`);
+    this.name = 'DraftNotDiscardableError';
+  }
+}
