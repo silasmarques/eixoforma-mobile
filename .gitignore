@@ -39,3 +39,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# masters de mídia de exercício — fonte oficial é o Google Drive EixoForma,
+# só os .webp otimizados em assets/exercises/ entram no repositório.
+assets/exercises-masters/

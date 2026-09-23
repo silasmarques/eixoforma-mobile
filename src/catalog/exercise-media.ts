@@ -27,11 +27,13 @@ export interface ExerciseMediaEntry {
  * a ausência de mídia nunca impede montar ou iniciar um treino.
  */
 export const EXERCISE_MEDIA: Partial<Record<string, ExerciseMediaEntry>> = {
-  // Lote piloto (ids canônicos confirmados — aguardando os PNGs reais em assets/exercises/):
-  // ex_agachamento_livre: { main: require('../../assets/exercises/ex_agachamento_livre.png') },
-  // ex_supino_inclinado_halteres: { main: require('../../assets/exercises/ex_supino_inclinado_halteres.png') },
-  // ex_puxada_frente: { main: require('../../assets/exercises/ex_puxada_frente.png') },
-  // ex_elevacao_lateral: { main: require('../../assets/exercises/ex_elevacao_lateral.png') },
+  // Lote piloto — prova de conceito com imagem dupla (início + fim do movimento).
+  ex_agachamento_livre: { main: require('../../assets/exercises/ex_agachamento_livre.webp') },
+  ex_supino_inclinado_halteres: {
+    main: require('../../assets/exercises/ex_supino_inclinado_halteres.webp'),
+  },
+  ex_puxada_frente: { main: require('../../assets/exercises/ex_puxada_frente.webp') },
+  ex_elevacao_lateral: { main: require('../../assets/exercises/ex_elevacao_lateral.webp') },
 };
 
 export function getExerciseMedia(exerciseId: string): ExerciseMediaEntry | null {

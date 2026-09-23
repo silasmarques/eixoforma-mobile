@@ -38,6 +38,27 @@ camada de persistência** (repositories passam a falar com uma API e/ou um
 sync engine), não a UI nem o domínio — services e componentes continuam
 chamando as mesmas assinaturas.
 
+## Mídia de exercício (ExerciseMedia)
+
+As imagens master de cada exercício (alta resolução, formato de composição
+dupla início/fim do movimento) são preservadas no Google Drive EixoForma, não
+no repositório — só os derivados `.webp` otimizados (768×768) entram em
+`assets/exercises/`, referenciados por `require()` literal em
+`src/catalog/exercise-media.ts` (ver comentário no arquivo sobre por que
+`require()` precisa ser sempre literal). `assets/exercises-masters/` é local
+e ignorado via `.gitignore` quando alguém baixa uma master pra gerar um novo
+derivado.
+
+A POC do lote piloto (`ex_agachamento_livre`, `ex_supino_inclinado_halteres`,
+`ex_puxada_frente`, `ex_elevacao_lateral`) confirmou que a composição dupla
+funciona bem em `hero` (imagem grande, tela de detalhe/execução), mas tem
+legibilidade limitada em `thumbnail` (56×56 — as duas poses ficam pequenas
+demais pra comunicar o movimento, servem só como assinatura visual do
+exercício). Evolução futura prevista, não implementada ainda: `thumbnail`
+com uma pose só + `hero` com a composição de duas fases, exigiria estender
+`ExerciseMediaEntry` (os campos `start`/`end` já comentados nesse arquivo
+seriam o caminho natural).
+
 ## Decisões de toolchain
 
 ### ESLint fixado em 9.39.5, não a versão mais recente (10.x)
