@@ -8,12 +8,13 @@ import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
 import { Tag } from '@/components/Tag';
 import { useDatabase } from '@/database/DatabaseProvider';
-import { getWorkoutDayById } from '@/repositories/workoutPlanRepository';
+import { getWorkoutDayById, getWorkoutDaySummaries } from '@/repositories/workoutPlanRepository';
 import { getAllExercises } from '@/repositories/exerciseRepository';
 import { planService } from '@/services/planService';
 import { prescriptionService } from '@/services/prescriptionService';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
-import { colors, spacing, typography } from '@/theme/tokens';
+import { WEEKDAY_ABBR_LABELS } from '@/utils/weekdayLabels';
+import { colors, radius, spacing, typography } from '@/theme/tokens';
 import type { Exercise } from '@/domain/exercise';
 import type { WorkoutDay, WorkoutPlan } from '@/domain/workoutPlan';
 
@@ -25,6 +26,7 @@ export default function RotinaDetailScreen() {
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [day, setDay] = useState<WorkoutDay | null>(null);
   const [exercisesById, setExercisesById] = useState<Record<string, Exercise>>({});
+  const [estimatedDurationMinutes, setEstimatedDurationMinutes] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     const [loadedPlan, loadedDay, exercises] = await Promise.all([
@@ -35,6 +37,12 @@ export default function RotinaDetailScreen() {
     setPlan(loadedPlan);
     setDay(loadedDay);
     setExercisesById(Object.fromEntries(exercises.map((e) => [e.id, e])));
+
+    if (loadedDay) {
+      const summaries = await getWorkoutDaySummaries(client, loadedDay.planVersionId);
+      const summary = summaries.find((s) => s.id === loadedDay.id);
+      setEstimatedDurationMinutes(summary?.estimatedDurationMinutes ?? null);
+    }
   }, [client, planId, dayId]);
 
   useFocusEffect(
@@ -92,20 +100,47 @@ export default function RotinaDetailScreen() {
     );
   }
 
+  const totalSets = day.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
+
   return (
     <Screen>
       <Stack.Screen options={{ title: day.name }} />
       <Text style={styles.title}>{day.name}</Text>
+      {day.weekdays.length > 0 && (
+        <Text style={styles.weekdays}>
+          {[...day.weekdays].sort((a, b) => a - b).map((d) => WEEKDAY_ABBR_LABELS[d].toUpperCase()).join(' • ')}
+        </Text>
+      )}
       <View style={styles.tagRow}>
         {day.muscleGroups.map((group) => (
           <Tag key={group} label={MUSCLE_GROUP_LABELS[group]} />
         ))}
       </View>
 
+      {day.exercises.length > 0 && (
+        <View style={styles.summaryRow}>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryValue}>{estimatedDurationMinutes ?? '—'}</Text>
+            <Text style={styles.summaryLabel}>min · duração estimada</Text>
+          </View>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryValue}>{day.exercises.length}</Text>
+            <Text style={styles.summaryLabel}>{day.exercises.length === 1 ? 'exercício' : 'exercícios'}</Text>
+          </View>
+          <View style={styles.summaryItem}>
+            <Text style={styles.summaryValue}>{totalSets}</Text>
+            <Text style={styles.summaryLabel}>{totalSets === 1 ? 'série' : 'séries'}</Text>
+          </View>
+        </View>
+      )}
+
+      <Text style={styles.sectionTitle}>Exercícios</Text>
+
       {day.exercises.length === 0 ? (
         <EmptyState
-          title="Nenhum exercício ainda"
-          description={isEditable ? 'Adicione o primeiro exercício desta rotina.' : undefined}
+          title="Adicione exercícios para montar este treino."
+          actionLabel={isEditable ? '+ Adicionar exercícios' : undefined}
+          onAction={isEditable ? () => router.push(`/planos/${planId}/rotina/${dayId}/adicionar-exercicio`) : undefined}
         />
       ) : (
         day.exercises.map((prescribedExercise, index) => {
@@ -134,9 +169,10 @@ export default function RotinaDetailScreen() {
         })
       )}
 
-      {isEditable && (
+      {isEditable && day.exercises.length > 0 && (
         <PrimaryButton
-          label="+ Adicionar exercício"
+          label="+ Adicionar exercícios"
+          variant="secondary"
           onPress={() => router.push(`/planos/${planId}/rotina/${dayId}/adicionar-exercicio`)}
         />
       )}
@@ -147,5 +183,16 @@ export default function RotinaDetailScreen() {
 const styles = StyleSheet.create({
   meta: { ...typography.body, color: colors.textSecondary },
   title: { ...typography.title, color: colors.textPrimary },
+  weekdays: { ...typography.caption, color: colors.primary, fontWeight: '700' },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  sectionTitle: { ...typography.subtitle, color: colors.textPrimary },
+  summaryRow: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.sm,
+  },
+  summaryItem: { flex: 1, alignItems: 'center', gap: 2 },
+  summaryValue: { ...typography.title, color: colors.textPrimary },
+  summaryLabel: { ...typography.caption, color: colors.textMuted, textAlign: 'center' },
 });

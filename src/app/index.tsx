@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 
 import { EmptyState } from '@/components/EmptyState';
 import { PlanHomeCard } from '@/components/PlanHomeCard';
@@ -13,11 +13,15 @@ import { getHomeSnapshot, type HomeSnapshot } from '@/services/homeSnapshot';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 
+const CARD_PEEK = 28;
+
 export default function HomeScreen() {
   const client = useDatabase();
   const router = useRouter();
   const { startWorkout, starting } = useStartWorkout();
   const [snapshot, setSnapshot] = useState<HomeSnapshot | null>(null);
+  const { width: windowWidth } = useWindowDimensions();
+  const cardWidth = windowWidth - spacing.md * 2 - CARD_PEEK;
 
   useFocusEffect(
     useCallback(() => {
@@ -88,7 +92,7 @@ export default function HomeScreen() {
           <Text style={styles.cardLabel}>Hoje</Text>
           <Text style={styles.cardMeta}>Nenhuma rotina marcada pra hoje.</Text>
           <PrimaryButton
-            label="Ver plano atual"
+            label="Ver rotina atual"
             variant="secondary"
             onPress={() => router.push(`/planos/${selectedPlan.plan.id}`)}
           />
@@ -96,10 +100,13 @@ export default function HomeScreen() {
       )}
 
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Meus treinos</Text>
+        <View>
+          <Text style={styles.sectionTitle}>Meus treinos</Text>
+          <Text style={styles.sectionSubtitle}>Crie suas próprias rotinas de treino</Text>
+        </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Cadastrar treino"
+          accessibilityLabel="Criar rotina"
           hitSlop={8}
           onPress={() => router.push('/planos/novo')}
           style={styles.sectionAddButton}
@@ -108,31 +115,40 @@ export default function HomeScreen() {
         </Pressable>
       </View>
 
-      {selectedPlan ? (
-        <PlanHomeCard
-          summary={selectedPlan}
-          highlighted
-          onPress={() => router.push(`/planos/${selectedPlan.plan.id}`)}
-        />
+      {selectedPlan || recentPlans.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          decelerationRate="fast"
+          snapToInterval={cardWidth + spacing.sm}
+          snapToAlignment="start"
+          contentContainerStyle={styles.horizontalList}
+        >
+          {selectedPlan && (
+            <View style={{ width: cardWidth }}>
+              <PlanHomeCard
+                summary={selectedPlan}
+                highlighted
+                onPress={() => router.push(`/planos/${selectedPlan.plan.id}`)}
+              />
+            </View>
+          )}
+          {recentPlans.map((summary) => (
+            <View key={summary.plan.id} style={{ width: cardWidth }}>
+              <PlanHomeCard summary={summary} onPress={() => router.push(`/planos/${summary.plan.id}`)} />
+            </View>
+          ))}
+        </ScrollView>
       ) : (
         <EmptyState
-          title="Nenhum plano ainda"
-          description="Cadastre seu primeiro treino pra começar."
-          actionLabel="+ Cadastrar treino"
+          title="Nenhuma rotina ainda"
+          description="Crie sua primeira rotina de treino pra começar."
+          actionLabel="+ Criar rotina"
           onAction={() => router.push('/planos/novo')}
         />
       )}
 
-      {recentPlans.map((summary) => (
-        <PlanHomeCard
-          key={summary.plan.id}
-          summary={summary}
-          onPress={() => router.push(`/planos/${summary.plan.id}`)}
-        />
-      ))}
-
       <PrimaryButton label="Ver todos" variant="secondary" onPress={() => router.push('/planos')} />
-      <PrimaryButton label="+ Cadastrar treino" variant="secondary" onPress={() => router.push('/planos/novo')} />
 
       <View style={styles.rowCards}>
         <View style={[styles.card, styles.halfCard]}>
@@ -196,6 +212,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   sectionTitle: { ...typography.subtitle, color: colors.textPrimary },
+  sectionSubtitle: { ...typography.caption, color: colors.textMuted },
+  horizontalList: { gap: spacing.sm, paddingRight: spacing.md },
   sectionAddButton: {
     width: minTouchTarget,
     height: minTouchTarget,

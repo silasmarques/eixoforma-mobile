@@ -49,9 +49,9 @@ export default function PlanosScreen() {
     return (
       <Screen>
         <EmptyState
-          title="Nenhum plano ainda"
-          description="Crie seu primeiro plano de treino."
-          actionLabel="+ Novo plano"
+          title="Nenhuma rotina ainda"
+          description="Crie sua primeira rotina de treino."
+          actionLabel="+ Criar rotina"
           onAction={() => router.push('/planos/novo')}
         />
       </Screen>
@@ -60,11 +60,11 @@ export default function PlanosScreen() {
 
   return (
     <Screen>
-      <PrimaryButton label="+ Novo plano" onPress={() => router.push('/planos/novo')} />
+      <PrimaryButton label="+ Criar rotina" onPress={() => router.push('/planos/novo')} />
 
       {personalPlans.length > 0 && (
         <>
-          <Text style={styles.sectionTitle}>Meus planos</Text>
+          <Text style={styles.sectionTitle}>Minhas rotinas</Text>
           {personalPlans.map(({ plan, status }) => (
             <PlanCard
               key={plan.id}

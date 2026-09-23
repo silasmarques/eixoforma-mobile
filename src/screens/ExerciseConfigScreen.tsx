@@ -15,6 +15,7 @@ import { getPrescribedExerciseDetail, getWorkoutDayById } from '@/repositories/w
 import { prescriptionService, type PrescribedSetDraftInput } from '@/services/prescriptionService';
 import { EQUIPMENT_LABELS } from '@/domain/equipment';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
+import { buildQueueSearch, configureSaveLabel } from '@/utils/exerciseQueue';
 import { parseDecimalInput } from '@/utils/parseDecimalInput';
 import { colors, spacing, typography } from '@/theme/tokens';
 import type { Exercise } from '@/domain/exercise';
@@ -32,6 +33,10 @@ interface ExerciseConfigScreenProps {
   exerciseId?: string;
   /** modo editar: id do PrescribedExercise já existente */
   prescribedExerciseId?: string;
+  /** ids restantes (modo criar, seleção múltipla na biblioteca) a configurar em seguida */
+  queue?: string[];
+  /** total de exercícios selecionados de uma vez na biblioteca — só define o texto do CTA final */
+  batchSize?: number;
 }
 
 function serializeSets(sets: SetDraft[]): string {
@@ -90,6 +95,8 @@ export function ExerciseConfigScreen({
   dayId,
   exerciseId,
   prescribedExerciseId,
+  queue = [],
+  batchSize,
 }: ExerciseConfigScreenProps) {
   const client = useDatabase();
   const router = useRouter();
@@ -231,12 +238,24 @@ export function ExerciseConfigScreen({
         targetExerciseId = created.id;
       }
       await prescriptionService.replacePrescribedSets(client, planId, targetExerciseId!, parsed);
+
+      if (!isEdit && queue.length > 0) {
+        const [next, ...rest] = queue;
+        const search = buildQueueSearch(rest, batchSize);
+        router.replace(
+          `/planos/${planId}/rotina/${dayId}/adicionar-exercicio/${next}/configurar${search ? `?${search}` : ''}`
+        );
+        return;
+      }
+
       router.back();
     } catch {
       setSaving(false);
       Alert.alert('Erro', 'Não foi possível salvar o exercício.');
     }
   }
+
+  const saveLabel = configureSaveLabel({ isEdit, remainingInQueue: queue.length, batchSize });
 
   if (!exercise) {
     return (
@@ -283,7 +302,7 @@ export function ExerciseConfigScreen({
       ))}
       <PrimaryButton label="+ Adicionar série" variant="secondary" onPress={addEmptySet} />
 
-      <PrimaryButton label="Salvar" onPress={handleSave} disabled={saving} />
+      <PrimaryButton label={saveLabel} onPress={handleSave} disabled={saving} />
     </Screen>
   );
 }

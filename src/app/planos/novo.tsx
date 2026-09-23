@@ -20,8 +20,9 @@ export default function NovoPlanoScreen() {
   useUnsavedChangesGuard(isDirty && !saving);
 
   async function handleCreate() {
+    if (saving) return;
     if (!name.trim()) {
-      Alert.alert('Nome obrigatório', 'Dê um nome pro plano.');
+      Alert.alert('Nome obrigatório', 'Dê um nome pra essa rotina.');
       return;
     }
     setSaving(true);
@@ -31,43 +32,47 @@ export default function NovoPlanoScreen() {
         goal: goal.trim() || null,
         origin: 'personal',
       });
+      await planService.selectPlan(client, plan.id);
       router.replace(`/planos/${plan.id}`);
     } catch {
       setSaving(false);
-      Alert.alert('Erro', 'Não foi possível criar o plano.');
+      Alert.alert('Erro', 'Não foi possível criar a rotina.');
     }
   }
 
   return (
     <Screen>
-      <Text style={styles.label}>Nome do plano</Text>
+      <Text style={styles.screenTitle}>Criar rotina</Text>
+
+      <Text style={styles.label}>Nome da rotina</Text>
       <TextInput
-        accessibilityLabel="Nome do plano"
+        accessibilityLabel="Nome da rotina"
         style={styles.input}
         value={name}
         onChangeText={setName}
-        placeholder="Hipertrofia Setembro"
+        placeholder="Hipertrofia — Setembro"
       />
 
-      <Text style={styles.label}>Objetivo (opcional)</Text>
+      <Text style={styles.label}>Comentário (opcional)</Text>
       <TextInput
-        accessibilityLabel="Objetivo do plano"
+        accessibilityLabel="Comentário da rotina"
         style={styles.input}
         value={goal}
         onChangeText={setGoal}
-        placeholder="Ganho de massa"
+        placeholder="Foco em hipertrofia com prioridade em peitoral e pernas."
       />
 
-      <PrimaryButton label="Criar plano" onPress={handleCreate} disabled={saving} />
+      <PrimaryButton label="Criar rotina" onPress={handleCreate} disabled={saving} />
       <Text style={styles.hint}>
-        Você adiciona as rotinas (Treino A, B, C...) na próxima tela. O plano só fica disponível pra
-        treinar depois que você tocar em &ldquo;Usar este plano&rdquo;.
+        Você adiciona os treinos (Treino A, B, C...) na próxima tela. Esta rotina só fica disponível
+        pra treinar depois que você tocar em &ldquo;Usar esta rotina&rdquo;.
       </Text>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  screenTitle: { ...typography.title, color: colors.textPrimary },
   label: { ...typography.caption, color: colors.textMuted },
   input: {
     minHeight: minTouchTarget,

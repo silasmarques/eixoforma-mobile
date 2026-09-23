@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Tag } from './Tag';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
-import { WEEKDAY_SHORT_LABELS } from '@/utils/weekdayLabels';
+import { WEEKDAY_ABBR_LABELS } from '@/utils/weekdayLabels';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 import type { MuscleGroup } from '@/domain/muscleGroup';
 
@@ -41,6 +41,11 @@ export function RotinaCard({
       onPress={onPress}
       style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
     >
+      <Text style={styles.weekdays}>
+        {weekdays.length > 0
+          ? [...weekdays].sort((a, b) => a - b).map((d) => WEEKDAY_ABBR_LABELS[d].toUpperCase()).join(' / ')
+          : 'Sem dia fixo'}
+      </Text>
       <View style={styles.header}>
         <Text style={styles.title}>{name}</Text>
         <Text style={styles.chevron}>›</Text>
@@ -52,7 +57,6 @@ export function RotinaCard({
       </View>
       <Text style={styles.meta}>
         {exerciseCount} {exerciseCount === 1 ? 'exercício' : 'exercícios'}
-        {weekdays.length > 0 ? ` · ${weekdays.map((d) => WEEKDAY_SHORT_LABELS[d]).join(', ')}` : ' · sem dia fixo'}
       </Text>
 
       {exercisePreview && exercisePreview.length > 0 && (
@@ -106,6 +110,7 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   cardPressed: { opacity: 0.85 },
+  weekdays: { ...typography.caption, color: colors.primary, fontWeight: '700' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { ...typography.title, color: colors.textPrimary },
   chevron: { ...typography.title, color: colors.textMuted },

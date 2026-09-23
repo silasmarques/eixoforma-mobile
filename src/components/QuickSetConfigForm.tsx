@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { PrimaryButton } from './PrimaryButton';
+import { RestChips } from './RestChips';
 import { TECHNIQUE_LABELS, TECHNIQUES } from '@/domain/technique';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 import type { Technique } from '@/domain/technique';
@@ -65,17 +66,10 @@ export function QuickSetConfigForm({ onApply }: QuickSetConfigFormProps) {
             placeholder="30 ou 32,5"
           />
         </View>
-        <View style={styles.field}>
-          <Text style={styles.label}>Descanso (s)</Text>
-          <TextInput
-            accessibilityLabel="Descanso em segundos"
-            style={styles.input}
-            keyboardType="number-pad"
-            value={restSeconds}
-            onChangeText={setRestSeconds}
-          />
-        </View>
       </View>
+
+      <Text style={styles.label}>Descanso entre séries</Text>
+      <RestChips value={restSeconds} onChange={setRestSeconds} />
 
       <View style={styles.techniqueRow}>
         {TECHNIQUES.map((t) => {

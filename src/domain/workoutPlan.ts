@@ -8,6 +8,14 @@ export type WorkoutPlanVersionStatus = 'draft' | 'active' | 'superseded';
 export interface WorkoutPlan {
   id: string;
   name: string;
+  /**
+   * Texto livre opcional do plano. Reaproveitado temporariamente pela UI de
+   * autoria (feat/mobile-authoring-ux) como "Comentário da rotina" — é o
+   * mesmo campo, só rótulo diferente, sem migration nova. Se "objetivo" e
+   * "comentário" precisarem virar conceitos semanticamente distintos no
+   * futuro (ex.: um editável a qualquer momento e outro fixado na criação),
+   * aí sim separar em duas colunas.
+   */
   goal: string | null;
   origin: PlanOrigin;
   createdByUserId: string | null;

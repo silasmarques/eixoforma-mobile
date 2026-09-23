@@ -38,6 +38,16 @@ camada de persistência** (repositories passam a falar com uma API e/ou um
 sync engine), não a UI nem o domínio — services e componentes continuam
 chamando as mesmas assinaturas.
 
+## `WorkoutPlan.goal` reaproveitado como "Comentário da rotina"
+
+A UX de autoria (feat/mobile-authoring-ux) precisava de um campo de texto
+livre opcional por rotina ("Comentário da rotina"). Em vez de criar uma
+migration nova, reaproveitou-se `WorkoutPlan.goal` (já existente desde a
+migration 008) — mesmo campo, mesma persistência, só rótulo diferente na UI.
+Se "objetivo" e "comentário" precisarem virar conceitos semanticamente
+distintos (ex.: um só editável na criação, outro editável a qualquer
+momento), aí sim vale separar em duas colunas — não antes disso.
+
 ## Mídia de exercício (ExerciseMedia)
 
 As imagens master de cada exercício (alta resolução, formato de composição

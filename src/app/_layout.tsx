@@ -22,6 +22,8 @@ export default function RootLayout() {
           <Stack.Screen name="treinos/index" options={{ title: 'Meus Treinos' }} />
           <Stack.Screen name="sessao/[sessionId]" options={{ title: 'Treino em execução' }} />
           <Stack.Screen name="historico/index" options={{ title: 'Histórico' }} />
+          <Stack.Screen name="planos/index" options={{ title: 'Minhas rotinas' }} />
+          <Stack.Screen name="planos/novo" options={{ title: 'Criar rotina' }} />
         </Stack>
       </DatabaseProvider>
     </SafeAreaProvider>

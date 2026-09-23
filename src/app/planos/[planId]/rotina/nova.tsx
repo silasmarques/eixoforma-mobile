@@ -6,7 +6,7 @@ export default function NovaRotinaRoute() {
   const { planId } = useLocalSearchParams<{ planId: string }>();
   return (
     <>
-      <Stack.Screen options={{ title: 'Nova rotina' }} />
+      <Stack.Screen options={{ title: 'Adicionar treino' }} />
       <RotinaFormScreen planId={planId} />
     </>
   );

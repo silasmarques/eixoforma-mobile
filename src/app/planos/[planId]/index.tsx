@@ -95,7 +95,7 @@ export default function PlanMontagemScreen() {
   }
 
   async function handleDiscardDraft() {
-    Alert.alert('Descartar alterações?', 'As mudanças feitas nesta versão em edição serão perdidas.', [
+    Alert.alert('Descartar alterações?', 'As mudanças feitas neste rascunho serão perdidas.', [
       { text: 'Cancelar', style: 'cancel' },
       {
         text: 'Descartar',
@@ -124,7 +124,7 @@ export default function PlanMontagemScreen() {
     setBusy(true);
     try {
       await planService.activatePlanVersion(client, { planId, versionId: version.id });
-      Alert.alert('Plano ativado', 'Este plano já pode ser usado para treinar.');
+      Alert.alert('Rotina ativada', 'Esta rotina já pode ser usada para treinar.');
       await load();
     } catch (error) {
       if (error instanceof IncompletePlanVersionError) {
@@ -208,20 +208,24 @@ export default function PlanMontagemScreen() {
       )}
 
       {isPersonal && !isEditable && (
-        <PrimaryButton label="Editar plano" onPress={handleEnterEditMode} disabled={busy} />
+        <PrimaryButton label="Editar rotina" onPress={handleEnterEditMode} disabled={busy} />
       )}
+
+      <Text style={styles.sectionTitle}>Treinos da rotina</Text>
 
       {isEditable && (
         <PrimaryButton
-          label="+ Adicionar rotina"
+          label="+ Adicionar treino"
           onPress={() => router.push(`/planos/${planId}/rotina/nova`)}
         />
       )}
 
       {days.length === 0 ? (
         <EmptyState
-          title="Nenhuma rotina ainda"
-          description={isEditable ? 'Adicione a primeira rotina deste plano.' : undefined}
+          title="Nenhum treino ainda"
+          description={
+            isEditable ? 'Crie seus treinos por dia da semana ou por grupos musculares.' : undefined
+          }
         />
       ) : (
         days.map((day, index) => (
@@ -243,7 +247,7 @@ export default function PlanMontagemScreen() {
       )}
 
       {isEditable && (
-        <PrimaryButton label="Usar este plano" onPress={handleActivate} disabled={busy} />
+        <PrimaryButton label="Usar esta rotina" onPress={handleActivate} disabled={busy} />
       )}
       {isEditable && hasActiveVersion && (
         <PrimaryButton
@@ -262,6 +266,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs, flexWrap: 'wrap' },
   title: { ...typography.title, color: colors.textPrimary },
   goal: { ...typography.body, color: colors.textSecondary },
+  sectionTitle: { ...typography.subtitle, color: colors.textPrimary },
   readOnlyBanner: {
     ...typography.caption,
     color: colors.textMuted,

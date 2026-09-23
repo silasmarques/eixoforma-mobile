@@ -11,6 +11,7 @@ import { getWorkoutDayById } from '@/repositories/workoutPlanRepository';
 import { prescriptionService } from '@/services/prescriptionService';
 import { workoutPlanService } from '@/services/workoutPlanService';
 import { MUSCLE_GROUPS, MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
+import { validateTreinoForm } from '@/utils/validateTreinoForm';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 import type { MuscleGroup } from '@/domain/muscleGroup';
 
@@ -77,8 +78,13 @@ export function RotinaFormScreen({ planId, dayId }: RotinaFormScreenProps) {
   }
 
   async function handleSave() {
-    if (!name.trim()) {
-      Alert.alert('Nome obrigatório', 'Dê um nome pra essa rotina.');
+    if (saving) return;
+    const validationError = validateTreinoForm({ name, weekdays });
+    if (validationError) {
+      Alert.alert(
+        validationError.field === 'name' ? 'Nome obrigatório' : 'Selecione ao menos um dia',
+        validationError.message
+      );
       return;
     }
     setSaving(true);
@@ -109,16 +115,21 @@ export function RotinaFormScreen({ planId, dayId }: RotinaFormScreenProps) {
 
   return (
     <Screen>
-      <Text style={styles.label}>Nome da rotina</Text>
+      <Text style={styles.screenTitle}>{isEdit ? 'Editar treino' : 'Adicionar treino'}</Text>
+
+      <Text style={styles.label}>Nome do treino</Text>
       <TextInput
-        accessibilityLabel="Nome da rotina"
+        accessibilityLabel="Nome do treino"
         style={styles.input}
         value={name}
         onChangeText={setName}
-        placeholder="Treino A"
+        placeholder="Treino A — Peito e Tríceps"
       />
 
-      <Text style={styles.label}>Grupos musculares</Text>
+      <Text style={styles.label}>Dias de treino</Text>
+      <WeekdayPicker value={weekdays} onChange={setWeekdays} />
+
+      <Text style={styles.label}>Grupos musculares (opcional)</Text>
       <View style={styles.chipsRow}>
         {MUSCLE_GROUPS.map((group) => {
           const selected = muscleGroups.includes(group);
@@ -138,15 +149,13 @@ export function RotinaFormScreen({ planId, dayId }: RotinaFormScreenProps) {
         })}
       </View>
 
-      <Text style={styles.label}>Dias da semana (opcional)</Text>
-      <WeekdayPicker value={weekdays} onChange={setWeekdays} />
-
-      <PrimaryButton label="Salvar" onPress={handleSave} disabled={saving} />
+      <PrimaryButton label={isEdit ? 'Salvar' : 'Adicionar'} onPress={handleSave} disabled={saving} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  screenTitle: { ...typography.title, color: colors.textPrimary },
   label: { ...typography.caption, color: colors.textMuted },
   input: {
     minHeight: minTouchTarget,

@@ -1,5 +1,6 @@
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
+import { RestChips } from './RestChips';
 import { TECHNIQUE_LABELS, TECHNIQUES } from '@/domain/technique';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 import type { Technique } from '@/domain/technique';
@@ -108,16 +109,10 @@ export function SetEditorRow({
           value={value.loadKg}
           onChangeText={(text) => onChange({ ...value, loadKg: text })}
         />
-
-        <TextInput
-          accessibilityLabel="Descanso em segundos"
-          style={styles.input}
-          keyboardType="number-pad"
-          placeholder="seg"
-          value={value.restSeconds}
-          onChangeText={(text) => onChange({ ...value, restSeconds: text })}
-        />
       </View>
+
+      <Text style={styles.restLabel}>Descanso</Text>
+      <RestChips value={value.restSeconds} onChange={(restSeconds) => onChange({ ...value, restSeconds })} />
 
       <View style={styles.techniqueRow}>
         {TECHNIQUES.map((technique) => {
@@ -195,6 +190,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   dash: { ...typography.body, color: colors.textMuted },
+  restLabel: { ...typography.caption, color: colors.textMuted },
   techniqueRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   techniqueChip: {
     borderRadius: radius.pill,
