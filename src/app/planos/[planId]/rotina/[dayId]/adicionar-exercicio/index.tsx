@@ -3,7 +3,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { EmptyState } from '@/components/EmptyState';
-import { ExercisePlaceholder } from '@/components/ExercisePlaceholder';
+import { ExerciseMedia } from '@/components/ExerciseMedia';
 import { FilterChips } from '@/components/FilterChips';
 import { Screen } from '@/components/Screen';
 import { useDatabase } from '@/database/DatabaseProvider';
@@ -72,7 +72,12 @@ export default function BibliotecaScreen() {
             }
             style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
           >
-            <ExercisePlaceholder name={exercise.name} muscleGroupSlug={exercise.imagePlaceholder} size={44} />
+            <ExerciseMedia
+              exerciseId={exercise.id}
+              name={exercise.name}
+              muscleGroupSlug={exercise.imagePlaceholder}
+              variant="thumbnail"
+            />
             <View style={styles.rowInfo}>
               <Text style={styles.rowName}>{exercise.name}</Text>
               <Text style={styles.rowMeta}>

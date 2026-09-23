@@ -9,12 +9,19 @@ import { Screen } from '@/components/Screen';
 import { StatusBadge } from '@/components/StatusBadge';
 import { useDatabase } from '@/database/DatabaseProvider';
 import { getVersionByStatus } from '@/repositories/planVersionRepository';
-import { duplicateDay, getWorkoutDaySummaries } from '@/repositories/workoutPlanRepository';
+import {
+  duplicateDay,
+  getWorkoutDayById,
+  getWorkoutDaySummaries,
+} from '@/repositories/workoutPlanRepository';
+import { getAllExercises } from '@/repositories/exerciseRepository';
 import { planService } from '@/services/planService';
 import { prescriptionService } from '@/services/prescriptionService';
 import { DraftNotDiscardableError, IncompletePlanVersionError } from '@/domain/prescriptionErrors';
 import { colors, spacing, typography } from '@/theme/tokens';
 import type { WorkoutDaySummary, WorkoutPlan, WorkoutPlanVersion } from '@/domain/workoutPlan';
+
+const EXERCISE_PREVIEW_LIMIT = 3;
 
 export default function PlanMontagemScreen() {
   const { planId } = useLocalSearchParams<{ planId: string }>();
@@ -25,6 +32,7 @@ export default function PlanMontagemScreen() {
   const [version, setVersion] = useState<WorkoutPlanVersion | null>(null);
   const [hasActiveVersion, setHasActiveVersion] = useState(false);
   const [days, setDays] = useState<WorkoutDaySummary[]>([]);
+  const [previewsByDayId, setPreviewsByDayId] = useState<Record<string, string[]>>({});
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -40,8 +48,21 @@ export default function PlanMontagemScreen() {
     if (viewable) {
       const summaries = await getWorkoutDaySummaries(client, viewable.id);
       setDays(summaries);
+
+      const exercises = await getAllExercises(client);
+      const exerciseNameById = new Map(exercises.map((e) => [e.id, e.name]));
+      const fullDays = await Promise.all(summaries.map((s) => getWorkoutDayById(client, s.id)));
+      const previews: Record<string, string[]> = {};
+      fullDays.forEach((fullDay) => {
+        if (!fullDay) return;
+        previews[fullDay.id] = fullDay.exercises
+          .slice(0, EXERCISE_PREVIEW_LIMIT)
+          .map((pe) => exerciseNameById.get(pe.exerciseId) ?? pe.exerciseId);
+      });
+      setPreviewsByDayId(previews);
     } else {
       setDays([]);
+      setPreviewsByDayId({});
     }
   }, [client, planId]);
 
@@ -210,6 +231,7 @@ export default function PlanMontagemScreen() {
             muscleGroups={day.muscleGroups}
             weekdays={day.weekdays}
             exerciseCount={day.exerciseCount}
+            exercisePreview={previewsByDayId[day.id]}
             readOnly={!isEditable}
             onPress={() => router.push(`/planos/${planId}/rotina/${day.id}`)}
             onMoveUp={isEditable && index > 0 ? () => handleMoveDay(day.id, -1) : undefined}

@@ -114,6 +114,7 @@ export default function RotinaDetailScreen() {
           return (
             <ExerciseRowCompact
               key={prescribedExercise.id}
+              exerciseId={exercise.id}
               name={exercise.name}
               primaryMuscleGroup={exercise.primaryMuscleGroup}
               imagePlaceholder={exercise.imagePlaceholder}

@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { ExercisePlaceholder } from '@/components/ExercisePlaceholder';
+import { ExerciseMedia } from '@/components/ExerciseMedia';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
 import { Tag } from '@/components/Tag';
@@ -79,7 +79,12 @@ export default function WorkoutDayDetailScreen() {
             onPress={() => router.push(`/treinos/${day.id}/exercicio/${prescribedExercise.id}`)}
           >
             <View style={styles.exerciseHeader}>
-              <ExercisePlaceholder name={exercise.name} muscleGroupSlug={exercise.imagePlaceholder} />
+              <ExerciseMedia
+                exerciseId={exercise.id}
+                name={exercise.name}
+                muscleGroupSlug={exercise.imagePlaceholder}
+                variant="thumbnail"
+              />
               <View style={styles.exerciseHeaderText}>
                 <Text style={styles.exerciseName}>{exercise.name}</Text>
                 <Text style={styles.exerciseMeta}>{MUSCLE_GROUP_LABELS[exercise.primaryMuscleGroup]}</Text>

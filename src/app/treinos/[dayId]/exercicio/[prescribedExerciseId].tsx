@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { ExercisePlaceholder } from '@/components/ExercisePlaceholder';
+import { ExerciseMedia } from '@/components/ExerciseMedia';
 import { Screen } from '@/components/Screen';
 import { Tag } from '@/components/Tag';
 import { useDatabase } from '@/database/DatabaseProvider';
@@ -43,17 +43,20 @@ export default function ExerciseDetailScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: exercise.name }} />
+      <ExerciseMedia
+        exerciseId={exercise.id}
+        name={exercise.name}
+        muscleGroupSlug={exercise.imagePlaceholder}
+        variant="hero"
+      />
       <View style={styles.header}>
-        <ExercisePlaceholder name={exercise.name} muscleGroupSlug={exercise.imagePlaceholder} size={72} />
-        <View style={styles.headerText}>
-          <Text style={styles.title}>{exercise.name}</Text>
-          <View style={styles.tagRow}>
-            <Tag label={MUSCLE_GROUP_LABELS[exercise.primaryMuscleGroup]} />
-            {exercise.secondaryMuscleGroups.map((group) => (
-              <Tag key={group} label={MUSCLE_GROUP_LABELS[group]} />
-            ))}
-            <Tag label={EQUIPMENT_LABELS[exercise.equipment]} />
-          </View>
+        <Text style={styles.title}>{exercise.name}</Text>
+        <View style={styles.tagRow}>
+          <Tag label={MUSCLE_GROUP_LABELS[exercise.primaryMuscleGroup]} />
+          {exercise.secondaryMuscleGroups.map((group) => (
+            <Tag key={group} label={MUSCLE_GROUP_LABELS[group]} />
+          ))}
+          <Tag label={EQUIPMENT_LABELS[exercise.equipment]} />
         </View>
       </View>
 
@@ -94,8 +97,7 @@ export default function ExerciseDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  headerText: { flex: 1, gap: spacing.xs },
+  header: { gap: spacing.xs },
   title: { ...typography.title, color: colors.textPrimary },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   card: {

@@ -2,16 +2,17 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Tag } from './Tag';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
+import { WEEKDAY_SHORT_LABELS } from '@/utils/weekdayLabels';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 import type { MuscleGroup } from '@/domain/muscleGroup';
-
-const WEEKDAY_SHORT = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 
 interface RotinaCardProps {
   name: string;
   muscleGroups: MuscleGroup[];
   weekdays: number[];
   exerciseCount: number;
+  /** Nomes dos primeiros exercícios, pra prévia (ex.: tela do plano) — omitido nas listas que não precisam disso. */
+  exercisePreview?: string[];
   onPress: () => void;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
@@ -25,6 +26,7 @@ export function RotinaCard({
   muscleGroups,
   weekdays,
   exerciseCount,
+  exercisePreview,
   onPress,
   onMoveUp,
   onMoveDown,
@@ -50,8 +52,21 @@ export function RotinaCard({
       </View>
       <Text style={styles.meta}>
         {exerciseCount} {exerciseCount === 1 ? 'exercício' : 'exercícios'}
-        {weekdays.length > 0 ? ` · ${weekdays.map((d) => WEEKDAY_SHORT[d]).join(', ')}` : ' · sem dia fixo'}
+        {weekdays.length > 0 ? ` · ${weekdays.map((d) => WEEKDAY_SHORT_LABELS[d]).join(', ')}` : ' · sem dia fixo'}
       </Text>
+
+      {exercisePreview && exercisePreview.length > 0 && (
+        <View style={styles.previewList}>
+          {exercisePreview.map((exerciseName) => (
+            <Text key={exerciseName} style={styles.previewLine} numberOfLines={1}>
+              {exerciseName}
+            </Text>
+          ))}
+          {exerciseCount > exercisePreview.length && (
+            <Text style={styles.previewMore}>+{exerciseCount - exercisePreview.length}</Text>
+          )}
+        </View>
+      )}
 
       {!readOnly && (onMoveUp || onMoveDown || onDuplicate || onDelete) && (
         <View style={styles.actions}>
@@ -96,6 +111,9 @@ const styles = StyleSheet.create({
   chevron: { ...typography.title, color: colors.textMuted },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   meta: { ...typography.body, color: colors.textSecondary },
+  previewList: { gap: 2 },
+  previewLine: { ...typography.caption, color: colors.textSecondary },
+  previewMore: { ...typography.caption, color: colors.textMuted, fontWeight: '700' },
   actions: {
     flexDirection: 'row',
     gap: spacing.md,

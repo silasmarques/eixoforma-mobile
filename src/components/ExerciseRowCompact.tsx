@@ -1,6 +1,6 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { ExercisePlaceholder } from './ExercisePlaceholder';
+import { ExerciseMedia } from './ExerciseMedia';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
 import { TECHNIQUE_LABELS } from '@/domain/technique';
 import { formatRestSeconds } from '@/utils/parseDecimalInput';
@@ -9,6 +9,7 @@ import type { MuscleGroup } from '@/domain/muscleGroup';
 import type { PrescribedSet } from '@/domain/workoutPlan';
 
 interface ExerciseRowCompactProps {
+  exerciseId: string;
   name: string;
   primaryMuscleGroup: MuscleGroup;
   imagePlaceholder: string;
@@ -29,6 +30,7 @@ function summarizeSets(sets: PrescribedSet[]): string {
 }
 
 export function ExerciseRowCompact({
+  exerciseId,
   name,
   primaryMuscleGroup,
   imagePlaceholder,
@@ -45,7 +47,7 @@ export function ExerciseRowCompact({
       onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
     >
-      <ExercisePlaceholder name={name} muscleGroupSlug={imagePlaceholder} size={44} />
+      <ExerciseMedia exerciseId={exerciseId} name={name} muscleGroupSlug={imagePlaceholder} variant="thumbnail" />
       <View style={styles.info}>
         <Text style={styles.name}>{name}</Text>
         <Text style={styles.meta}>{MUSCLE_GROUP_LABELS[primaryMuscleGroup]}</Text>

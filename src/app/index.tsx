@@ -1,7 +1,9 @@
 import { useCallback, useState } from 'react';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { EmptyState } from '@/components/EmptyState';
+import { PlanHomeCard } from '@/components/PlanHomeCard';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
 import { Tag } from '@/components/Tag';
@@ -9,7 +11,7 @@ import { useDatabase } from '@/database/DatabaseProvider';
 import { useStartWorkout } from '@/hooks/useStartWorkout';
 import { getHomeSnapshot, type HomeSnapshot } from '@/services/homeSnapshot';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
-import { colors, radius, spacing, typography } from '@/theme/tokens';
+import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 
 export default function HomeScreen() {
   const client = useDatabase();
@@ -37,7 +39,8 @@ export default function HomeScreen() {
     );
   }
 
-  const { suggestedDay, activeSession, lastSession, weeklyCompleted, weeklyTotal } = snapshot;
+  const { selectedPlan, todayWorkout, recentPlans, activeSession, lastSession, weeklyCompleted, weeklyTotal } =
+    snapshot;
 
   return (
     <Screen>
@@ -54,33 +57,82 @@ export default function HomeScreen() {
         </View>
       )}
 
-      {suggestedDay && (
+      {!activeSession && todayWorkout && (
         <View style={styles.card}>
-          <Text style={styles.cardLabel}>Treino sugerido de hoje</Text>
-          <Text style={styles.cardTitle}>{suggestedDay.name}</Text>
+          <Text style={styles.cardLabel}>Hoje</Text>
+          <Text style={styles.cardTitle}>{todayWorkout.day.name}</Text>
           <View style={styles.tagRow}>
-            {suggestedDay.muscleGroups.map((group) => (
+            {todayWorkout.day.muscleGroups.map((group) => (
               <Tag key={group} label={MUSCLE_GROUP_LABELS[group]} />
             ))}
           </View>
           <Text style={styles.cardMeta}>
-            {suggestedDay.exerciseCount} exercícios · ~{suggestedDay.estimatedDurationMinutes} min
+            {todayWorkout.day.exerciseCount} exercícios · ~{todayWorkout.day.estimatedDurationMinutes} min
           </Text>
           <PrimaryButton
-            label={activeSession ? 'Ver Treino A' : 'Iniciar treino'}
+            label="Iniciar treino"
             disabled={starting}
             onPress={() =>
-              activeSession
-                ? router.push(`/treinos/${suggestedDay.id}`)
-                : startWorkout({
-                    id: suggestedDay.id,
-                    planId: suggestedDay.planId,
-                    name: suggestedDay.name,
-                  })
+              startWorkout({
+                id: todayWorkout.day.id,
+                planId: todayWorkout.planId,
+                name: todayWorkout.day.name,
+              })
             }
           />
         </View>
       )}
+
+      {!activeSession && !todayWorkout && selectedPlan && (
+        <View style={styles.card}>
+          <Text style={styles.cardLabel}>Hoje</Text>
+          <Text style={styles.cardMeta}>Nenhuma rotina marcada pra hoje.</Text>
+          <PrimaryButton
+            label="Ver plano atual"
+            variant="secondary"
+            onPress={() => router.push(`/planos/${selectedPlan.plan.id}`)}
+          />
+        </View>
+      )}
+
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Meus treinos</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Cadastrar treino"
+          hitSlop={8}
+          onPress={() => router.push('/planos/novo')}
+          style={styles.sectionAddButton}
+        >
+          <Text style={styles.sectionAddLabel}>+</Text>
+        </Pressable>
+      </View>
+
+      {selectedPlan ? (
+        <PlanHomeCard
+          summary={selectedPlan}
+          highlighted
+          onPress={() => router.push(`/planos/${selectedPlan.plan.id}`)}
+        />
+      ) : (
+        <EmptyState
+          title="Nenhum plano ainda"
+          description="Cadastre seu primeiro treino pra começar."
+          actionLabel="+ Cadastrar treino"
+          onAction={() => router.push('/planos/novo')}
+        />
+      )}
+
+      {recentPlans.map((summary) => (
+        <PlanHomeCard
+          key={summary.plan.id}
+          summary={summary}
+          onPress={() => router.push(`/planos/${summary.plan.id}`)}
+        />
+      ))}
+
+      <PrimaryButton label="Ver todos" variant="secondary" onPress={() => router.push('/planos')} />
+      <PrimaryButton label="+ Cadastrar treino" variant="secondary" onPress={() => router.push('/planos/novo')} />
 
       <View style={styles.rowCards}>
         <View style={[styles.card, styles.halfCard]}>
@@ -108,16 +160,7 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <PrimaryButton
-        label="Meus Treinos"
-        variant="secondary"
-        onPress={() => router.push('/treinos')}
-      />
-      <PrimaryButton
-        label="Histórico"
-        variant="secondary"
-        onPress={() => router.push('/historico')}
-      />
+      <PrimaryButton label="Histórico" variant="secondary" onPress={() => router.push('/historico')} />
     </Screen>
   );
 }
@@ -147,4 +190,17 @@ const styles = StyleSheet.create({
   bannerSubtitle: { ...typography.body, color: colors.textSecondary },
   rowCards: { flexDirection: 'row', gap: spacing.md },
   halfCard: { flex: 1 },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sectionTitle: { ...typography.subtitle, color: colors.textPrimary },
+  sectionAddButton: {
+    width: minTouchTarget,
+    height: minTouchTarget,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sectionAddLabel: { ...typography.title, color: colors.primary },
 });

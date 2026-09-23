@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
+import { ExerciseMedia } from '@/components/ExerciseMedia';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
 import { useDatabase } from '@/database/DatabaseProvider';
@@ -61,6 +62,14 @@ export default function WorkoutSessionScreen() {
         );
         return (
         <View key={exercise.id} style={styles.card}>
+          {snapshotExercise && (
+            <ExerciseMedia
+              exerciseId={snapshotExercise.exerciseId}
+              name={snapshotExercise.exercise.name}
+              muscleGroupSlug={snapshotExercise.exercise.imagePlaceholder}
+              variant="hero"
+            />
+          )}
           <Text style={styles.exerciseTitle}>{snapshotExercise?.exercise.name ?? exercise.id}</Text>
           {exercise.sets.map((set) => (
             <Text key={set.id} style={styles.setLine}>
