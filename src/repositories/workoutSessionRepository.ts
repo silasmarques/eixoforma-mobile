@@ -1,3 +1,6 @@
+import { buildPrescriptionSnapshot } from '@/domain/buildPrescriptionSnapshot';
+import { InvalidPrescriptionSnapshotError, parsePrescriptionSnapshot } from '@/domain/parsePrescriptionSnapshot';
+import type { PrescriptionSnapshot } from '@/domain/prescriptionSnapshot';
 import { generateId } from '@/utils/id';
 import type {
   PerformedExercise,
@@ -9,6 +12,7 @@ import type {
   WorkoutSessionSummary,
 } from '@/domain/workoutSession';
 import type { SQLiteClient } from '@/database/sqliteClient';
+import { getAllExercises } from './exerciseRepository';
 import { getWorkoutDayById } from './workoutPlanRepository';
 
 export class DuplicateActiveSessionError extends Error {
@@ -21,7 +25,9 @@ export class DuplicateActiveSessionError extends Error {
 interface SessionRow {
   id: string;
   plan_id: string;
+  plan_version_id: string;
   day_id: string;
+  prescription_snapshot: string;
   status: string;
   started_at: string;
   completed_at: string | null;
@@ -46,6 +52,22 @@ interface PerformedSetRow {
   note: string | null;
 }
 
+/**
+ * Sessões criadas antes do Mobile 1.3 têm `prescription_snapshot = '{}'`
+ * (default do backfill da migration 006) — nunca existiu um snapshot de
+ * verdade para elas. Tratamos isso como ausência de dado (null), não como
+ * erro: a UI mostra o que tem (performed_sets) sem o enriquecimento do
+ * snapshot para esse recorte legado.
+ */
+function parsePrescriptionSnapshotSafe(raw: string): PrescriptionSnapshot | null {
+  try {
+    return parsePrescriptionSnapshot(raw);
+  } catch (error) {
+    if (error instanceof InvalidPrescriptionSnapshotError) return null;
+    throw error;
+  }
+}
+
 function toPerformedSet(row: PerformedSetRow): PerformedSet {
   return {
     id: row.id,
@@ -59,14 +81,28 @@ function toPerformedSet(row: PerformedSetRow): PerformedSet {
   };
 }
 
+function toSummary(row: SessionRow & { day_name: string }): WorkoutSessionSummary {
+  return {
+    id: row.id,
+    planId: row.plan_id,
+    planVersionId: row.plan_version_id,
+    dayId: row.day_id,
+    dayName: row.day_name,
+    status: row.status as WorkoutSessionStatus,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+  };
+}
+
 /**
- * Cria a sessão e já materializa performed_exercises/performed_sets "pending"
- * espelhando a prescrição do dia — a UI de execução (próximo checkpoint) só
- * atualiza esses registros, nunca lê a prescrição para decidir o que exibir.
+ * Cria a sessão a partir de uma versão `active` já resolvida pelo service
+ * (esta função não decide qual versão usar — recebe planVersionId pronto),
+ * congela o prescriptionSnapshot e já materializa performed_exercises/
+ * performed_sets "pending" espelhando a prescrição do dia.
  */
 export async function createSession(
   client: SQLiteClient,
-  params: { planId: string; dayId: string }
+  params: { planId: string; planVersionId: string; dayId: string }
 ): Promise<WorkoutSession> {
   const active = await findActiveSession(client);
   if (active) {
@@ -77,6 +113,13 @@ export async function createSession(
   if (!day) {
     throw new Error(`Dia de treino não encontrado: ${params.dayId}`);
   }
+  if (day.planVersionId !== params.planVersionId) {
+    throw new Error(`Dia ${params.dayId} não pertence à versão ${params.planVersionId}.`);
+  }
+
+  const exercises = await getAllExercises(client);
+  const exercisesById = new Map(exercises.map((exercise) => [exercise.id, exercise]));
+  const snapshot = buildPrescriptionSnapshot(day, exercisesById);
 
   const sessionId = generateId('session');
   const startedAt = new Date().toISOString();
@@ -84,8 +127,18 @@ export async function createSession(
   try {
     await client.withTransactionAsync(async () => {
       await client.runAsync(
-        'INSERT INTO workout_sessions (id, plan_id, day_id, status, started_at, completed_at) VALUES (?, ?, ?, ?, ?, NULL);',
-        [sessionId, params.planId, params.dayId, 'in_progress', startedAt]
+        `INSERT INTO workout_sessions
+          (id, plan_id, plan_version_id, day_id, prescription_snapshot, status, started_at, completed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL);`,
+        [
+          sessionId,
+          params.planId,
+          params.planVersionId,
+          params.dayId,
+          JSON.stringify(snapshot),
+          'in_progress',
+          startedAt,
+        ]
       );
 
       for (const prescribedExercise of day.exercises) {
@@ -125,17 +178,7 @@ export async function findActiveSession(client: SQLiteClient): Promise<WorkoutSe
      WHERE s.status = 'in_progress'
      LIMIT 1;`
   );
-  if (!row) return null;
-
-  return {
-    id: row.id,
-    planId: row.plan_id,
-    dayId: row.day_id,
-    dayName: row.day_name,
-    status: row.status as WorkoutSessionStatus,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-  };
+  return row ? toSummary(row) : null;
 }
 
 export async function getSessionHistory(client: SQLiteClient): Promise<WorkoutSessionSummary[]> {
@@ -146,16 +189,7 @@ export async function getSessionHistory(client: SQLiteClient): Promise<WorkoutSe
      WHERE s.status != 'in_progress'
      ORDER BY s.started_at DESC;`
   );
-
-  return rows.map((row) => ({
-    id: row.id,
-    planId: row.plan_id,
-    dayId: row.day_id,
-    dayName: row.day_name,
-    status: row.status as WorkoutSessionStatus,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-  }));
+  return rows.map(toSummary);
 }
 
 export async function getSessionById(
@@ -192,7 +226,9 @@ export async function getSessionById(
   return {
     id: sessionRow.id,
     planId: sessionRow.plan_id,
+    planVersionId: sessionRow.plan_version_id,
     dayId: sessionRow.day_id,
+    prescriptionSnapshot: parsePrescriptionSnapshotSafe(sessionRow.prescription_snapshot),
     status: sessionRow.status as WorkoutSessionStatus,
     startedAt: sessionRow.started_at,
     completedAt: sessionRow.completed_at,

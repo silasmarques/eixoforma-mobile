@@ -16,6 +16,8 @@ import { getWorkoutDayById } from '@/repositories/workoutPlanRepository';
 import { setupTestDatabase } from '../support/setupTestDatabase';
 import type { SQLiteClient } from '@/database/sqliteClient';
 
+import { PLAN_VERSION_ID } from '@/mocks/workoutPlanSeed';
+
 const PLAN_ID = 'plan_eixoforma_demo';
 const DAY_A = 'day_treino_a';
 const DAY_B = 'day_treino_b';
@@ -28,7 +30,7 @@ describe('workoutSessionRepository', () => {
   });
 
   it('cria a sessão e materializa performed_exercises/performed_sets pendentes', async () => {
-    const session = await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    const session = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
     const day = await getWorkoutDayById(client, DAY_A);
 
     expect(session.status).toBe('in_progress');
@@ -38,22 +40,22 @@ describe('workoutSessionRepository', () => {
   });
 
   it('impede duas sessões in_progress simultâneas', async () => {
-    await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
 
-    await expect(createSession(client, { planId: PLAN_ID, dayId: DAY_B })).rejects.toBeInstanceOf(
+    await expect(createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_B })).rejects.toBeInstanceOf(
       DuplicateActiveSessionError
     );
   });
 
   it('libera para uma nova sessão depois que a anterior é concluída ou abandonada', async () => {
-    const first = await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    const first = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
     await completeSession(client, first.id);
 
-    await expect(createSession(client, { planId: PLAN_ID, dayId: DAY_B })).resolves.toBeTruthy();
+    await expect(createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_B })).resolves.toBeTruthy();
   });
 
   it('encontra a sessão ativa', async () => {
-    const created = await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    const created = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
 
     const active = await findActiveSession(client);
     expect(active?.id).toBe(created.id);
@@ -66,7 +68,7 @@ describe('workoutSessionRepository', () => {
   });
 
   it('registra uma série realizada sem alterar a prescrição', async () => {
-    const session = await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    const session = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
     const day = await getWorkoutDayById(client, DAY_A);
     const prescribedSet = day!.exercises[0].sets[0];
     const performedSet = session.exercises[0].sets[0];
@@ -89,7 +91,7 @@ describe('workoutSessionRepository', () => {
   });
 
   it('finaliza a sessão marcando completed e completedAt', async () => {
-    const session = await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    const session = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
     await completeSession(client, session.id);
 
     const reloaded = await getSessionById(client, session.id);
@@ -98,7 +100,7 @@ describe('workoutSessionRepository', () => {
   });
 
   it('abandona a sessão marcando abandoned', async () => {
-    const session = await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    const session = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
     await abandonSession(client, session.id);
 
     const reloaded = await getSessionById(client, session.id);
@@ -106,10 +108,10 @@ describe('workoutSessionRepository', () => {
   });
 
   it('lista o histórico só com sessões finalizadas ou abandonadas', async () => {
-    const completed = await createSession(client, { planId: PLAN_ID, dayId: DAY_A });
+    const completed = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
     await completeSession(client, completed.id);
 
-    const active = await createSession(client, { planId: PLAN_ID, dayId: DAY_B });
+    const active = await createSession(client, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_B });
 
     const history = await getSessionHistory(client);
     expect(history.map((s) => s.id)).toEqual([completed.id]);
@@ -122,7 +124,7 @@ describe('workoutSessionRepository', () => {
 
     try {
       const firstOpen = await setupTestDatabase({ path: dbPath });
-      const created = await createSession(firstOpen, { planId: PLAN_ID, dayId: DAY_A });
+      const created = await createSession(firstOpen, { planId: PLAN_ID, planVersionId: PLAN_VERSION_ID, dayId: DAY_A });
       await firstOpen.closeAsync();
 
       const secondOpen = await setupTestDatabase({ path: dbPath, seeded: false });
@@ -132,5 +134,28 @@ describe('workoutSessionRepository', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('prescriptionSnapshot resiste a edição posterior do catálogo (schemaVersion=1)', async () => {
+    const session = await createSession(client, {
+      planId: PLAN_ID,
+      planVersionId: PLAN_VERSION_ID,
+      dayId: DAY_A,
+    });
+
+    // sessão recém-criada sempre tem snapshot — só sessões legadas pré-1.3 têm null
+    const snapshot = session.prescriptionSnapshot!;
+    expect(snapshot.schemaVersion).toBe(1);
+    const originalName = snapshot.exercises[0].exercise.name;
+    expect(originalName).toBe('Supino reto com barra');
+
+    // edita o catálogo compartilhado DEPOIS da sessão já criada
+    await client.runAsync('UPDATE exercises SET name = ? WHERE id = ?;', [
+      'Nome editado depois',
+      snapshot.exercises[0].exerciseId,
+    ]);
+
+    const reloaded = await getSessionById(client, session.id);
+    expect(reloaded?.prescriptionSnapshot?.exercises[0].exercise.name).toBe(originalName);
   });
 });

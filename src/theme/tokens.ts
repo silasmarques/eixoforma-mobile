@@ -19,12 +19,17 @@ export const colors = {
   warning: '#B8862B',
   danger: '#B3402F',
   muscleGroup: {
-    peito: '#C6564A',
-    ombros: '#B8862B',
-    triceps: '#8A6BAE',
-    costas: '#2F6B90',
+    chest: '#C6564A',
+    back: '#2F6B90',
+    shoulders: '#B8862B',
     biceps: '#3E7A5C',
-    pernas: '#6B5B3E',
+    triceps: '#8A6BAE',
+    forearms: '#7A6A55',
+    core: '#4A7A6B',
+    quadriceps: '#6B5B3E',
+    hamstrings: '#8A6B3E',
+    glutes: '#A6613E',
+    calves: '#5B6E4E',
   },
 } as const;
 

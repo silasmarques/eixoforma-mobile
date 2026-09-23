@@ -55,9 +55,13 @@ export default function WorkoutSessionScreen() {
         {completedSets} de {totalSets} séries concluídas
       </Text>
 
-      {session.exercises.map((exercise) => (
+      {session.exercises.map((exercise) => {
+        const snapshotExercise = session.prescriptionSnapshot?.exercises.find(
+          (e) => e.prescribedExerciseId === exercise.prescribedExerciseId
+        );
+        return (
         <View key={exercise.id} style={styles.card}>
-          <Text style={styles.exerciseTitle}>{exercise.id}</Text>
+          <Text style={styles.exerciseTitle}>{snapshotExercise?.exercise.name ?? exercise.id}</Text>
           {exercise.sets.map((set) => (
             <Text key={set.id} style={styles.setLine}>
               {set.status === 'completed'
@@ -66,7 +70,8 @@ export default function WorkoutSessionScreen() {
             </Text>
           ))}
         </View>
-      ))}
+        );
+      })}
 
       <PrimaryButton
         label="Concluir treino"

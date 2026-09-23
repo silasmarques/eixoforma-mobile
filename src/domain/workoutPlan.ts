@@ -1,4 +1,32 @@
+import type { MuscleGroup } from './muscleGroup';
 import type { Technique } from './technique';
+
+export type PlanOrigin = 'prescribed' | 'personal';
+export type WorkoutPlanVersionStatus = 'draft' | 'active' | 'superseded';
+
+/** Identidade estável do plano — o que o usuário chama de "Hipertrofia Setembro". */
+export interface WorkoutPlan {
+  id: string;
+  name: string;
+  origin: PlanOrigin;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Uma árvore imutável de prescrição sob um WorkoutPlan. `draft` é editável em
+ * lugar; `active` e `superseded` nunca são editadas — qualquer alteração
+ * cria (ou reaproveita) um draft via `prescriptionService.getEditableVersion`.
+ */
+export interface WorkoutPlanVersion {
+  id: string;
+  planId: string;
+  versionNumber: number;
+  status: WorkoutPlanVersionStatus;
+  createdAt: string;
+  activatedAt: string | null;
+}
 
 /**
  * Prescrição. Imutável do ponto de vista da execução: WorkoutSession referencia
@@ -27,26 +55,26 @@ export interface PrescribedExercise {
 export interface WorkoutDay {
   id: string;
   planId: string;
+  planVersionId: string;
   order: number;
   name: string;
-  muscleGroups: string[];
+  description: string;
+  muscleGroups: MuscleGroup[];
+  weekdays: number[];
   exercises: PrescribedExercise[];
-}
-
-export interface WorkoutPlan {
-  id: string;
-  name: string;
-  createdAt: string;
-  updatedAt: string;
-  days: WorkoutDay[];
 }
 
 /** Resumo sem a árvore completa de exercícios — usado em listagens (cards). */
 export interface WorkoutDaySummary {
   id: string;
   planId: string;
+  planVersionId: string;
   order: number;
   name: string;
-  muscleGroups: string[];
+  description: string;
+  muscleGroups: MuscleGroup[];
+  weekdays: number[];
   exerciseCount: number;
+  estimatedDurationMinutes: number;
+  lastPerformedAt: string | null;
 }

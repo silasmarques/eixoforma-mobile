@@ -1,3 +1,5 @@
+import type { PrescriptionSnapshot } from './prescriptionSnapshot';
+
 export type WorkoutSessionStatus = 'in_progress' | 'completed' | 'abandoned';
 export type PerformedSetStatus = 'pending' | 'completed' | 'skipped';
 export type PerformedExerciseStatus = 'pending' | 'in_progress' | 'completed' | 'skipped';
@@ -30,7 +32,14 @@ export interface PerformedExercise {
 export interface WorkoutSession {
   id: string;
   planId: string;
+  planVersionId: string;
   dayId: string;
+  /**
+   * `null` só para sessões criadas antes do Mobile 1.3 (não existia
+   * snapshot ainda) — nunca para sessões novas, que sempre o congelam na
+   * criação. Ver workoutSessionRepository.getSessionById.
+   */
+  prescriptionSnapshot: PrescriptionSnapshot | null;
   status: WorkoutSessionStatus;
   startedAt: string;
   completedAt: string | null;
@@ -40,6 +49,7 @@ export interface WorkoutSession {
 export interface WorkoutSessionSummary {
   id: string;
   planId: string;
+  planVersionId: string;
   dayId: string;
   dayName: string;
   status: WorkoutSessionStatus;

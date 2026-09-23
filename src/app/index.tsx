@@ -4,35 +4,40 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
+import { Tag } from '@/components/Tag';
 import { useDatabase } from '@/database/DatabaseProvider';
-import { workoutPlanService } from '@/services/workoutPlanService';
-import { workoutSessionService } from '@/services/workoutSessionService';
+import { useStartWorkout } from '@/hooks/useStartWorkout';
+import { getHomeSnapshot, type HomeSnapshot } from '@/services/homeSnapshot';
+import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
 import { colors, radius, spacing, typography } from '@/theme/tokens';
-import type { WorkoutDaySummary } from '@/domain/workoutPlan';
-import type { WorkoutSessionSummary } from '@/domain/workoutSession';
 
 export default function HomeScreen() {
   const client = useDatabase();
   const router = useRouter();
-  const [suggestedDay, setSuggestedDay] = useState<WorkoutDaySummary | null>(null);
-  const [activeSession, setActiveSession] = useState<WorkoutSessionSummary | null>(null);
+  const { startWorkout, starting } = useStartWorkout();
+  const [snapshot, setSnapshot] = useState<HomeSnapshot | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
-      Promise.all([
-        workoutPlanService.getWorkoutDaySummaries(client),
-        workoutSessionService.findActiveSession(client),
-      ]).then(([days, session]) => {
-        if (cancelled) return;
-        setSuggestedDay(days[0] ?? null);
-        setActiveSession(session);
+      getHomeSnapshot(client).then((result) => {
+        if (!cancelled) setSnapshot(result);
       });
       return () => {
         cancelled = true;
       };
     }, [client])
   );
+
+  if (!snapshot) {
+    return (
+      <Screen>
+        <Text style={styles.meta}>Carregando…</Text>
+      </Screen>
+    );
+  }
+
+  const { suggestedDay, activeSession, lastSession, weeklyCompleted, weeklyTotal } = snapshot;
 
   return (
     <Screen>
@@ -42,12 +47,10 @@ export default function HomeScreen() {
         <View style={styles.bannerCard} accessibilityRole="summary">
           <Text style={styles.bannerTitle}>Você possui um treino em andamento</Text>
           <Text style={styles.bannerSubtitle}>{activeSession.dayName}</Text>
-          <View style={styles.bannerActions}>
-            <PrimaryButton
-              label="Continuar treino"
-              onPress={() => router.push(`/sessao/${activeSession.id}`)}
-            />
-          </View>
+          <PrimaryButton
+            label="Continuar treino"
+            onPress={() => router.push(`/sessao/${activeSession.id}`)}
+          />
         </View>
       )}
 
@@ -55,20 +58,54 @@ export default function HomeScreen() {
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Treino sugerido de hoje</Text>
           <Text style={styles.cardTitle}>{suggestedDay.name}</Text>
+          <View style={styles.tagRow}>
+            {suggestedDay.muscleGroups.map((group) => (
+              <Tag key={group} label={MUSCLE_GROUP_LABELS[group]} />
+            ))}
+          </View>
           <Text style={styles.cardMeta}>
-            {suggestedDay.muscleGroups.join(', ')} · {suggestedDay.exerciseCount} exercícios
+            {suggestedDay.exerciseCount} exercícios · ~{suggestedDay.estimatedDurationMinutes} min
           </Text>
           <PrimaryButton
-            label="Iniciar treino"
-            disabled={!!activeSession}
-            onPress={() => router.push(`/treinos/${suggestedDay.id}`)}
+            label={activeSession ? 'Ver Treino A' : 'Iniciar treino'}
+            disabled={starting}
+            onPress={() =>
+              activeSession
+                ? router.push(`/treinos/${suggestedDay.id}`)
+                : startWorkout({
+                    id: suggestedDay.id,
+                    planId: suggestedDay.planId,
+                    name: suggestedDay.name,
+                  })
+            }
           />
         </View>
       )}
 
-      <View style={styles.card}>
-        <Text style={styles.cardLabel}>Progresso semanal</Text>
-        <Text style={styles.cardTitle}>2 de 3 treinos concluídos</Text>
+      <View style={styles.rowCards}>
+        <View style={[styles.card, styles.halfCard]}>
+          <Text style={styles.cardLabel}>Último treino</Text>
+          {lastSession ? (
+            <>
+              <Text style={styles.cardTitle}>{lastSession.dayName}</Text>
+              <Text style={styles.cardMeta}>
+                {new Date(lastSession.completedAt ?? lastSession.startedAt).toLocaleDateString(
+                  'pt-BR'
+                )}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.cardMeta}>Nenhum treino concluído ainda.</Text>
+          )}
+        </View>
+
+        <View style={[styles.card, styles.halfCard]}>
+          <Text style={styles.cardLabel}>Progresso semanal</Text>
+          <Text style={styles.cardTitle}>
+            {weeklyCompleted} de {weeklyTotal}
+          </Text>
+          <Text style={styles.cardMeta}>treinos concluídos</Text>
+        </View>
       </View>
 
       <PrimaryButton
@@ -87,6 +124,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   greeting: { ...typography.display, color: colors.textPrimary },
+  meta: { ...typography.body, color: colors.textSecondary },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,
@@ -98,6 +136,7 @@ const styles = StyleSheet.create({
   cardLabel: { ...typography.caption, color: colors.textMuted },
   cardTitle: { ...typography.title, color: colors.textPrimary },
   cardMeta: { ...typography.body, color: colors.textSecondary },
+  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   bannerCard: {
     backgroundColor: colors.surfaceRaised,
     borderRadius: radius.lg,
@@ -106,5 +145,6 @@ const styles = StyleSheet.create({
   },
   bannerTitle: { ...typography.subtitle, color: colors.textPrimary },
   bannerSubtitle: { ...typography.body, color: colors.textSecondary },
-  bannerActions: { marginTop: spacing.xs },
+  rowCards: { flexDirection: 'row', gap: spacing.md },
+  halfCard: { flex: 1 },
 });

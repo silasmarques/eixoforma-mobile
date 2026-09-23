@@ -1,26 +1,33 @@
+import { generateId } from '@/utils/id';
 import type {
   PrescribedExercise,
   PrescribedSet,
   WorkoutDay,
   WorkoutDaySummary,
-  WorkoutPlan,
 } from '@/domain/workoutPlan';
+import type { Exercise } from '@/domain/exercise';
+import type { MuscleGroup } from '@/domain/muscleGroup';
 import type { Technique } from '@/domain/technique';
 import type { SQLiteClient } from '@/database/sqliteClient';
+import { getExerciseById } from './exerciseRepository';
 
-interface PlanRow {
-  id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-}
+const SECONDS_PER_SET_ESTIMATE = 40;
 
 interface DayRow {
   id: string;
   plan_id: string;
+  plan_version_id: string;
   order: number;
   name: string;
+  description: string;
   muscle_groups: string;
+}
+
+interface DaySummaryRow extends DayRow {
+  exercise_count: number;
+  total_rest_seconds: number;
+  total_sets: number;
+  last_performed_at: string | null;
 }
 
 interface PrescribedExerciseRow {
@@ -58,43 +65,83 @@ function toSet(row: PrescribedSetRow): PrescribedSet {
   };
 }
 
-/** Retorna o único plano ativo do protótipo, ou null se ainda não houver dados. */
-export async function getActivePlanSummary(
-  client: SQLiteClient
-): Promise<Pick<WorkoutPlan, 'id' | 'name' | 'createdAt' | 'updatedAt'> | null> {
-  const row = await client.getFirstAsync<PlanRow>(
-    'SELECT * FROM workout_plans ORDER BY created_at LIMIT 1;'
-  );
-  if (!row) return null;
-  return { id: row.id, name: row.name, createdAt: row.created_at, updatedAt: row.updated_at };
+function toPrescribedExercise(row: PrescribedExerciseRow, sets: PrescribedSetRow[]): PrescribedExercise {
+  return {
+    id: row.id,
+    exerciseId: row.exercise_id,
+    order: row.order,
+    coachNote: row.coach_note,
+    sets: sets.map(toSet),
+  };
 }
 
-export async function getWorkoutDaySummaries(client: SQLiteClient): Promise<WorkoutDaySummary[]> {
-  const rows = await client.getAllAsync<DayRow & { exercise_count: number }>(
-    `SELECT d.*, COUNT(pe.id) as exercise_count
+async function getWeekdaysForDay(client: SQLiteClient, dayId: string): Promise<number[]> {
+  const rows = await client.getAllAsync<{ weekday: number }>(
+    'SELECT weekday FROM workout_day_weekdays WHERE day_id = ? ORDER BY weekday;',
+    [dayId]
+  );
+  return rows.map((row) => row.weekday);
+}
+
+// ---------------------------------------------------------------------------
+// Leitura
+// ---------------------------------------------------------------------------
+
+export async function getWorkoutDaySummaries(
+  client: SQLiteClient,
+  planVersionId: string
+): Promise<WorkoutDaySummary[]> {
+  const rows = await client.getAllAsync<DaySummaryRow>(
+    `SELECT
+       d.*,
+       v.plan_id as plan_id,
+       COUNT(DISTINCT pe.id) as exercise_count,
+       COALESCE(SUM(ps.rest_seconds), 0) as total_rest_seconds,
+       COUNT(ps.id) as total_sets,
+       (SELECT MAX(s.completed_at) FROM workout_sessions s
+          WHERE s.day_id = d.id AND s.status = 'completed') as last_performed_at
      FROM workout_days d
+     JOIN workout_plan_versions v ON v.id = d.plan_version_id
      LEFT JOIN prescribed_exercises pe ON pe.day_id = d.id
+     LEFT JOIN prescribed_sets ps ON ps.prescribed_exercise_id = pe.id
+     WHERE d.plan_version_id = ?
      GROUP BY d.id
-     ORDER BY d."order";`
+     ORDER BY d."order";`,
+    [planVersionId]
   );
 
-  return rows.map((row) => ({
-    id: row.id,
-    planId: row.plan_id,
-    order: row.order,
-    name: row.name,
-    muscleGroups: JSON.parse(row.muscle_groups) as string[],
-    exerciseCount: row.exercise_count,
-  }));
+  const summaries: WorkoutDaySummary[] = [];
+  for (const row of rows) {
+    summaries.push({
+      id: row.id,
+      planId: row.plan_id,
+      planVersionId: row.plan_version_id,
+      order: row.order,
+      name: row.name,
+      description: row.description,
+      muscleGroups: JSON.parse(row.muscle_groups) as MuscleGroup[],
+      weekdays: await getWeekdaysForDay(client, row.id),
+      exerciseCount: row.exercise_count,
+      estimatedDurationMinutes: Math.round(
+        (row.total_rest_seconds + row.total_sets * SECONDS_PER_SET_ESTIMATE) / 60
+      ),
+      lastPerformedAt: row.last_performed_at,
+    });
+  }
+  return summaries;
 }
 
 export async function getWorkoutDayById(
   client: SQLiteClient,
   dayId: string
 ): Promise<WorkoutDay | null> {
-  const dayRow = await client.getFirstAsync<DayRow>('SELECT * FROM workout_days WHERE id = ?;', [
-    dayId,
-  ]);
+  const dayRow = await client.getFirstAsync<DayRow>(
+    `SELECT d.*, v.plan_id as plan_id
+     FROM workout_days d
+     JOIN workout_plan_versions v ON v.id = d.plan_version_id
+     WHERE d.id = ?;`,
+    [dayId]
+  );
   if (!dayRow) return null;
 
   const exerciseRows = await client.getAllAsync<PrescribedExerciseRow>(
@@ -108,21 +155,321 @@ export async function getWorkoutDayById(
       'SELECT * FROM prescribed_sets WHERE prescribed_exercise_id = ? ORDER BY "order";',
       [exerciseRow.id]
     );
-    exercises.push({
-      id: exerciseRow.id,
-      exerciseId: exerciseRow.exercise_id,
-      order: exerciseRow.order,
-      coachNote: exerciseRow.coach_note,
-      sets: setRows.map(toSet),
-    });
+    exercises.push(toPrescribedExercise(exerciseRow, setRows));
   }
 
   return {
     id: dayRow.id,
     planId: dayRow.plan_id,
+    planVersionId: dayRow.plan_version_id,
     order: dayRow.order,
     name: dayRow.name,
-    muscleGroups: JSON.parse(dayRow.muscle_groups) as string[],
+    description: dayRow.description,
+    muscleGroups: JSON.parse(dayRow.muscle_groups) as MuscleGroup[],
+    weekdays: await getWeekdaysForDay(client, dayId),
     exercises,
   };
+}
+
+export interface PrescribedExerciseDetail {
+  dayId: string;
+  dayName: string;
+  prescribedExercise: PrescribedExercise;
+  exercise: Exercise;
+}
+
+export async function getPrescribedExerciseDetail(
+  client: SQLiteClient,
+  prescribedExerciseId: string
+): Promise<PrescribedExerciseDetail | null> {
+  const exerciseRow = await client.getFirstAsync<PrescribedExerciseRow>(
+    'SELECT * FROM prescribed_exercises WHERE id = ?;',
+    [prescribedExerciseId]
+  );
+  if (!exerciseRow) return null;
+
+  const [setRows, dayRow, exercise] = await Promise.all([
+    client.getAllAsync<PrescribedSetRow>(
+      'SELECT * FROM prescribed_sets WHERE prescribed_exercise_id = ? ORDER BY "order";',
+      [prescribedExerciseId]
+    ),
+    client.getFirstAsync<DayRow>('SELECT * FROM workout_days WHERE id = ?;', [exerciseRow.day_id]),
+    getExerciseById(client, exerciseRow.exercise_id),
+  ]);
+
+  if (!dayRow || !exercise) return null;
+
+  return {
+    dayId: dayRow.id,
+    dayName: dayRow.name,
+    prescribedExercise: toPrescribedExercise(exerciseRow, setRows),
+    exercise,
+  };
+}
+
+/** Confirma que um dayId pertence a uma versão específica — usado pelo service para detectar ids obsoletos. */
+export async function dayBelongsToVersion(
+  client: SQLiteClient,
+  dayId: string,
+  planVersionId: string
+): Promise<boolean> {
+  const row = await client.getFirstAsync<{ found: number }>(
+    'SELECT 1 as found FROM workout_days WHERE id = ? AND plan_version_id = ?;',
+    [dayId, planVersionId]
+  );
+  return row !== null;
+}
+
+/** Confirma que um prescribedExerciseId pertence (via o dia) a uma versão específica. */
+export async function prescribedExerciseBelongsToVersion(
+  client: SQLiteClient,
+  prescribedExerciseId: string,
+  planVersionId: string
+): Promise<boolean> {
+  const row = await client.getFirstAsync<{ found: number }>(
+    `SELECT 1 as found FROM prescribed_exercises pe
+     JOIN workout_days d ON d.id = pe.day_id
+     WHERE pe.id = ? AND d.plan_version_id = ?;`,
+    [prescribedExerciseId, planVersionId]
+  );
+  return row !== null;
+}
+
+/** Confirma que um prescribedSetId pertence (via exercício e dia) a uma versão específica. */
+export async function prescribedSetBelongsToVersion(
+  client: SQLiteClient,
+  prescribedSetId: string,
+  planVersionId: string
+): Promise<boolean> {
+  const row = await client.getFirstAsync<{ found: number }>(
+    `SELECT 1 as found FROM prescribed_sets ps
+     JOIN prescribed_exercises pe ON pe.id = ps.prescribed_exercise_id
+     JOIN workout_days d ON d.id = pe.day_id
+     WHERE ps.id = ? AND d.plan_version_id = ?;`,
+    [prescribedSetId, planVersionId]
+  );
+  return row !== null;
+}
+
+// ---------------------------------------------------------------------------
+// Escrita — mecânica pura, sem política de versionamento/origem (isso é do
+// prescriptionService; ver src/services/prescriptionService.ts)
+// ---------------------------------------------------------------------------
+
+export interface AddDayInput {
+  planVersionId: string;
+  order: number;
+  name: string;
+  description: string;
+  muscleGroups: MuscleGroup[];
+  weekdays: number[];
+}
+
+export async function addDay(client: SQLiteClient, input: AddDayInput): Promise<WorkoutDay> {
+  const id = generateId('day');
+  await client.runAsync(
+    // plan_id (coluna legada) resolvido via subquery — só para satisfazer a
+    // constraint NOT NULL original; nenhuma leitura nova depende dela.
+    `INSERT INTO workout_days (id, plan_id, plan_version_id, "order", name, description, muscle_groups)
+     VALUES (?, (SELECT plan_id FROM workout_plan_versions WHERE id = ?), ?, ?, ?, ?, ?);`,
+    [id, input.planVersionId, input.planVersionId, input.order, input.name, input.description, JSON.stringify(input.muscleGroups)]
+  );
+  await setDayWeekdays(client, id, input.weekdays);
+  const day = await getWorkoutDayById(client, id);
+  if (!day) throw new Error('Falha ao criar dia de treino.');
+  return day;
+}
+
+export interface UpdateDayInput {
+  name?: string;
+  description?: string;
+  muscleGroups?: MuscleGroup[];
+  order?: number;
+}
+
+export async function updateDay(client: SQLiteClient, dayId: string, input: UpdateDayInput): Promise<void> {
+  const current = await client.getFirstAsync<DayRow>('SELECT * FROM workout_days WHERE id = ?;', [dayId]);
+  if (!current) throw new Error(`Dia não encontrado: ${dayId}`);
+
+  await client.runAsync(
+    'UPDATE workout_days SET name = ?, description = ?, muscle_groups = ?, "order" = ? WHERE id = ?;',
+    [
+      input.name ?? current.name,
+      input.description ?? current.description,
+      input.muscleGroups ? JSON.stringify(input.muscleGroups) : current.muscle_groups,
+      input.order ?? current.order,
+      dayId,
+    ]
+  );
+}
+
+export async function removeDay(client: SQLiteClient, dayId: string): Promise<void> {
+  await client.withTransactionAsync(async () => {
+    const exerciseRows = await client.getAllAsync<{ id: string }>(
+      'SELECT id FROM prescribed_exercises WHERE day_id = ?;',
+      [dayId]
+    );
+    for (const exerciseRow of exerciseRows) {
+      await client.runAsync('DELETE FROM prescribed_sets WHERE prescribed_exercise_id = ?;', [
+        exerciseRow.id,
+      ]);
+    }
+    await client.runAsync('DELETE FROM prescribed_exercises WHERE day_id = ?;', [dayId]);
+    await client.runAsync('DELETE FROM workout_day_weekdays WHERE day_id = ?;', [dayId]);
+    await client.runAsync('DELETE FROM workout_days WHERE id = ?;', [dayId]);
+  });
+}
+
+/** Substitui todos os dias da semana do dia (delete+insert atômico). */
+export async function setDayWeekdays(
+  client: SQLiteClient,
+  dayId: string,
+  weekdays: number[]
+): Promise<void> {
+  await client.withTransactionAsync(async () => {
+    await client.runAsync('DELETE FROM workout_day_weekdays WHERE day_id = ?;', [dayId]);
+    for (const weekday of weekdays) {
+      await client.runAsync('INSERT INTO workout_day_weekdays (day_id, weekday) VALUES (?, ?);', [
+        dayId,
+        weekday,
+      ]);
+    }
+  });
+}
+
+export interface AddPrescribedExerciseInput {
+  dayId: string;
+  exerciseId: string;
+  order: number;
+  coachNote: string | null;
+}
+
+export async function addPrescribedExercise(
+  client: SQLiteClient,
+  input: AddPrescribedExerciseInput
+): Promise<PrescribedExercise> {
+  const id = generateId('pex');
+  await client.runAsync(
+    'INSERT INTO prescribed_exercises (id, day_id, exercise_id, "order", coach_note) VALUES (?, ?, ?, ?, ?);',
+    [id, input.dayId, input.exerciseId, input.order, input.coachNote]
+  );
+  return { id, exerciseId: input.exerciseId, order: input.order, coachNote: input.coachNote, sets: [] };
+}
+
+export interface UpdatePrescribedExerciseInput {
+  coachNote?: string | null;
+  order?: number;
+}
+
+export async function updatePrescribedExercise(
+  client: SQLiteClient,
+  prescribedExerciseId: string,
+  input: UpdatePrescribedExerciseInput
+): Promise<void> {
+  const current = await client.getFirstAsync<PrescribedExerciseRow>(
+    'SELECT * FROM prescribed_exercises WHERE id = ?;',
+    [prescribedExerciseId]
+  );
+  if (!current) throw new Error(`Exercício prescrito não encontrado: ${prescribedExerciseId}`);
+
+  await client.runAsync('UPDATE prescribed_exercises SET coach_note = ?, "order" = ? WHERE id = ?;', [
+    input.coachNote !== undefined ? input.coachNote : current.coach_note,
+    input.order ?? current.order,
+    prescribedExerciseId,
+  ]);
+}
+
+export async function removePrescribedExercise(
+  client: SQLiteClient,
+  prescribedExerciseId: string
+): Promise<void> {
+  await client.withTransactionAsync(async () => {
+    await client.runAsync('DELETE FROM prescribed_sets WHERE prescribed_exercise_id = ?;', [
+      prescribedExerciseId,
+    ]);
+    await client.runAsync('DELETE FROM prescribed_exercises WHERE id = ?;', [prescribedExerciseId]);
+  });
+}
+
+export interface AddPrescribedSetInput {
+  prescribedExerciseId: string;
+  order: number;
+  targetReps: number | null;
+  repRangeMin: number | null;
+  repRangeMax: number | null;
+  targetLoadKg: number | null;
+  restSeconds: number;
+  technique: Technique;
+  note: string | null;
+}
+
+export async function addPrescribedSet(
+  client: SQLiteClient,
+  input: AddPrescribedSetInput
+): Promise<PrescribedSet> {
+  const id = generateId('pset');
+  await client.runAsync(
+    `INSERT INTO prescribed_sets
+      (id, prescribed_exercise_id, "order", target_reps, rep_range_min, rep_range_max, target_load_kg, rest_seconds, technique, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+    [
+      id,
+      input.prescribedExerciseId,
+      input.order,
+      input.targetReps,
+      input.repRangeMin,
+      input.repRangeMax,
+      input.targetLoadKg,
+      input.restSeconds,
+      input.technique,
+      input.note,
+    ]
+  );
+  return {
+    id,
+    order: input.order,
+    targetReps: input.targetReps,
+    repRangeMin: input.repRangeMin,
+    repRangeMax: input.repRangeMax,
+    targetLoadKg: input.targetLoadKg,
+    restSeconds: input.restSeconds,
+    technique: input.technique,
+    note: input.note,
+  };
+}
+
+export type UpdatePrescribedSetInput = Partial<Omit<AddPrescribedSetInput, 'prescribedExerciseId'>>;
+
+export async function updatePrescribedSet(
+  client: SQLiteClient,
+  prescribedSetId: string,
+  input: UpdatePrescribedSetInput
+): Promise<void> {
+  const current = await client.getFirstAsync<PrescribedSetRow>(
+    'SELECT * FROM prescribed_sets WHERE id = ?;',
+    [prescribedSetId]
+  );
+  if (!current) throw new Error(`Série prescrita não encontrada: ${prescribedSetId}`);
+
+  await client.runAsync(
+    `UPDATE prescribed_sets SET
+       "order" = ?, target_reps = ?, rep_range_min = ?, rep_range_max = ?,
+       target_load_kg = ?, rest_seconds = ?, technique = ?, note = ?
+     WHERE id = ?;`,
+    [
+      input.order ?? current.order,
+      input.targetReps !== undefined ? input.targetReps : current.target_reps,
+      input.repRangeMin !== undefined ? input.repRangeMin : current.rep_range_min,
+      input.repRangeMax !== undefined ? input.repRangeMax : current.rep_range_max,
+      input.targetLoadKg !== undefined ? input.targetLoadKg : current.target_load_kg,
+      input.restSeconds ?? current.rest_seconds,
+      input.technique ?? current.technique,
+      input.note !== undefined ? input.note : current.note,
+      prescribedSetId,
+    ]
+  );
+}
+
+export async function removePrescribedSet(client: SQLiteClient, prescribedSetId: string): Promise<void> {
+  await client.runAsync('DELETE FROM prescribed_sets WHERE id = ?;', [prescribedSetId]);
 }

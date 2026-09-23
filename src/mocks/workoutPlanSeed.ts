@@ -1,7 +1,8 @@
-import type { PrescribedSet, WorkoutDay, WorkoutPlan } from '@/domain/workoutPlan';
+import type { PrescribedSet, WorkoutDay, WorkoutPlan, WorkoutPlanVersion } from '@/domain/workoutPlan';
 import type { Technique } from '@/domain/technique';
 
-const PLAN_ID = 'plan_eixoforma_demo';
+export const PLAN_ID = 'plan_eixoforma_demo';
+export const PLAN_VERSION_ID = 'plan_eixoforma_demo_v1';
 const PLAN_CREATED_AT = '2026-09-01T12:00:00.000Z';
 
 function buildSets(
@@ -25,9 +26,12 @@ function buildSets(
 const dayA: WorkoutDay = {
   id: 'day_treino_a',
   planId: PLAN_ID,
+  planVersionId: PLAN_VERSION_ID,
   order: 1,
   name: 'Treino A',
-  muscleGroups: ['Peito', 'Ombros', 'Tríceps'],
+  description: 'Empurrar. Foco em força de peito e ombros, com tríceps como acessório.',
+  muscleGroups: ['chest', 'shoulders', 'triceps'],
+  weekdays: [1, 4], // segunda e quinta
   exercises: [
     {
       id: 'pex_a_supino_reto',
@@ -102,9 +106,12 @@ const dayA: WorkoutDay = {
 const dayB: WorkoutDay = {
   id: 'day_treino_b',
   planId: PLAN_ID,
+  planVersionId: PLAN_VERSION_ID,
   order: 2,
   name: 'Treino B',
-  muscleGroups: ['Costas', 'Bíceps'],
+  description: 'Puxar. Foco em amplitude de costas, com bíceps como acessório.',
+  muscleGroups: ['back', 'biceps'],
+  weekdays: [2, 5], // terça e sexta
   exercises: [
     {
       id: 'pex_b_puxada_frente',
@@ -179,9 +186,12 @@ const dayB: WorkoutDay = {
 const dayC: WorkoutDay = {
   id: 'day_treino_c',
   planId: PLAN_ID,
+  planVersionId: PLAN_VERSION_ID,
   order: 3,
   name: 'Treino C',
-  muscleGroups: ['Pernas'],
+  description: 'Pernas completas — quadríceps, posterior de coxa e panturrilha.',
+  muscleGroups: ['quadriceps', 'hamstrings', 'glutes', 'calves'],
+  weekdays: [3, 6], // quarta e sábado
   exercises: [
     {
       id: 'pex_c_agachamento',
@@ -253,10 +263,22 @@ const dayC: WorkoutDay = {
   ],
 };
 
-export const mockWorkoutPlan: WorkoutPlan = {
+export const mockPlan: WorkoutPlan = {
   id: PLAN_ID,
   name: 'Plano EixoForma — Demonstração',
+  origin: 'prescribed',
+  createdByUserId: null,
   createdAt: PLAN_CREATED_AT,
   updatedAt: PLAN_CREATED_AT,
-  days: [dayA, dayB, dayC],
 };
+
+export const mockPlanVersion: WorkoutPlanVersion = {
+  id: PLAN_VERSION_ID,
+  planId: PLAN_ID,
+  versionNumber: 1,
+  status: 'active',
+  createdAt: PLAN_CREATED_AT,
+  activatedAt: PLAN_CREATED_AT,
+};
+
+export const mockWorkoutDays: WorkoutDay[] = [dayA, dayB, dayC];

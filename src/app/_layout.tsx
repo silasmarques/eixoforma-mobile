@@ -20,7 +20,6 @@ export default function RootLayout() {
         >
           <Stack.Screen name="index" options={{ title: 'EixoForma' }} />
           <Stack.Screen name="treinos/index" options={{ title: 'Meus Treinos' }} />
-          <Stack.Screen name="treinos/[dayId]" options={{ title: 'Detalhe do treino' }} />
           <Stack.Screen name="sessao/[sessionId]" options={{ title: 'Treino em execução' }} />
           <Stack.Screen name="historico/index" options={{ title: 'Histórico' }} />
         </Stack>
