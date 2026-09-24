@@ -11,9 +11,19 @@ interface PlanCardProps {
   status: WorkoutPlanVersionStatus | null;
   isSelected?: boolean;
   onPress: () => void;
+  /** Rótulo do status "active" — telas que ainda chamam a entidade de "plano" (masculino) precisam de "Ativo" em vez do "Ativa" padrão. */
+  activeStatusLabel?: string;
 }
 
-export function PlanCard({ name, goal, isPrescribed, status, isSelected, onPress }: PlanCardProps) {
+export function PlanCard({
+  name,
+  goal,
+  isPrescribed,
+  status,
+  isSelected,
+  onPress,
+  activeStatusLabel,
+}: PlanCardProps) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -33,7 +43,9 @@ export function PlanCard({ name, goal, isPrescribed, status, isSelected, onPress
       {goal && <Text style={styles.goal}>{goal}</Text>}
       <View style={styles.badges}>
         {isPrescribed && <StatusBadge kind="prescribed" />}
-        {status && <StatusBadge kind={status} />}
+        {status && (
+          <StatusBadge kind={status} label={status === 'active' ? activeStatusLabel : undefined} />
+        )}
       </View>
     </Pressable>
   );

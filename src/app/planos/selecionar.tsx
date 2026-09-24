@@ -69,6 +69,7 @@ export default function PlanSelectorSheet() {
               status={status}
               isSelected={plan.id === selectedPlanId}
               onPress={() => selectAndClose(plan.id)}
+              activeStatusLabel="Ativo"
             />
           ))}
         </>
@@ -86,6 +87,7 @@ export default function PlanSelectorSheet() {
               status={status}
               isSelected={plan.id === selectedPlanId}
               onPress={() => selectAndClose(plan.id)}
+              activeStatusLabel="Ativo"
             />
           ))}
         </>

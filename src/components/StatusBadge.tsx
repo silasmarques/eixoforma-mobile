@@ -7,7 +7,7 @@ type BadgeKind = WorkoutPlanVersionStatus | 'prescribed';
 
 const LABELS: Record<BadgeKind, string> = {
   draft: 'Rascunho',
-  active: 'Ativo',
+  active: 'Ativa',
   superseded: 'Substituído',
   prescribed: 'Prescrito',
 };
@@ -26,10 +26,21 @@ const TEXT_COLORS: Record<BadgeKind, string> = {
   prescribed: '#6B4A96',
 };
 
-export function StatusBadge({ kind }: { kind: BadgeKind }) {
+interface StatusBadgeProps {
+  kind: BadgeKind;
+  /**
+   * Sobrescreve o texto padrão — necessário porque este badge é
+   * compartilhado por telas que chamam a entidade de "rotina" (feminino,
+   * ex.: "Ativa") e telas que ainda dizem "plano" (masculino, "Ativo").
+   * Sem isso, o rótulo fixo erra a concordância em um dos dois contextos.
+   */
+  label?: string;
+}
+
+export function StatusBadge({ kind, label }: StatusBadgeProps) {
   return (
     <View style={[styles.badge, { backgroundColor: BACKGROUNDS[kind] }]}>
-      <Text style={[styles.label, { color: TEXT_COLORS[kind] }]}>{LABELS[kind]}</Text>
+      <Text style={[styles.label, { color: TEXT_COLORS[kind] }]}>{label ?? LABELS[kind]}</Text>
     </View>
   );
 }

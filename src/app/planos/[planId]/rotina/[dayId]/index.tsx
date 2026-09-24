@@ -12,21 +12,27 @@ import { getWorkoutDayById, getWorkoutDaySummaries } from '@/repositories/workou
 import { getAllExercises } from '@/repositories/exerciseRepository';
 import { planService } from '@/services/planService';
 import { prescriptionService } from '@/services/prescriptionService';
+import { workoutSessionService } from '@/services/workoutSessionService';
+import { useStartWorkout } from '@/hooks/useStartWorkout';
 import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
 import { WEEKDAY_ABBR_LABELS } from '@/utils/weekdayLabels';
 import { colors, radius, spacing, typography } from '@/theme/tokens';
 import type { Exercise } from '@/domain/exercise';
 import type { WorkoutDay, WorkoutPlan } from '@/domain/workoutPlan';
+import type { WorkoutSessionSummary } from '@/domain/workoutSession';
 
 export default function RotinaDetailScreen() {
   const { planId, dayId } = useLocalSearchParams<{ planId: string; dayId: string }>();
   const client = useDatabase();
   const router = useRouter();
+  const { startWorkout, starting } = useStartWorkout();
 
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [day, setDay] = useState<WorkoutDay | null>(null);
   const [exercisesById, setExercisesById] = useState<Record<string, Exercise>>({});
   const [estimatedDurationMinutes, setEstimatedDurationMinutes] = useState<number | null>(null);
+  const [isActiveVersion, setIsActiveVersion] = useState(false);
+  const [activeSession, setActiveSession] = useState<WorkoutSessionSummary | null>(null);
 
   const load = useCallback(async () => {
     const [loadedPlan, loadedDay, exercises] = await Promise.all([
@@ -42,7 +48,13 @@ export default function RotinaDetailScreen() {
       const summaries = await getWorkoutDaySummaries(client, loadedDay.planVersionId);
       const summary = summaries.find((s) => s.id === loadedDay.id);
       setEstimatedDurationMinutes(summary?.estimatedDurationMinutes ?? null);
+
+      const activeVersion = await planService.getActiveVersion(client, planId);
+      setIsActiveVersion(activeVersion?.id === loadedDay.planVersionId);
     }
+
+    const session = await workoutSessionService.findActiveSession(client);
+    setActiveSession(session && session.planId === planId ? session : null);
   }, [client, planId, dayId]);
 
   useFocusEffect(
@@ -102,6 +114,10 @@ export default function RotinaDetailScreen() {
 
   const totalSets = day.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
 
+  function handleStartWorkout() {
+    startWorkout({ id: dayId, planId, name: day!.name });
+  }
+
   return (
     <Screen>
       <Stack.Screen options={{ title: day.name }} />
@@ -132,6 +148,18 @@ export default function RotinaDetailScreen() {
             <Text style={styles.summaryLabel}>{totalSets === 1 ? 'série' : 'séries'}</Text>
           </View>
         </View>
+      )}
+
+      {activeSession ? (
+        <PrimaryButton
+          label="Continuar treino"
+          onPress={() => router.push(`/sessao/${activeSession.id}`)}
+        />
+      ) : (
+        isActiveVersion &&
+        day.exercises.length > 0 && (
+          <PrimaryButton label="Iniciar treino" onPress={handleStartWorkout} disabled={starting} />
+        )
       )}
 
       <Text style={styles.sectionTitle}>Exercícios</Text>

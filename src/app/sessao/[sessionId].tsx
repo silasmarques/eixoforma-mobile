@@ -83,7 +83,7 @@ export default function WorkoutSessionScreen() {
       })}
 
       <PrimaryButton
-        label="Concluir treino"
+        label="Finalizar treino"
         onPress={async () => {
           await workoutSessionService.completeSession(client, session.id);
           router.replace('/');

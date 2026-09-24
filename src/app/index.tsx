@@ -9,7 +9,6 @@ import { Screen } from '@/components/Screen';
 import { useDatabase } from '@/database/DatabaseProvider';
 import { useStartWorkout } from '@/hooks/useStartWorkout';
 import { getHomeSnapshot, type HomeSnapshot } from '@/services/homeSnapshot';
-import { resolveRecentRoutineCta } from '@/utils/recentRoutineCta';
 import { WEEKDAY_ABBR_LABELS } from '@/utils/weekdayLabels';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 
@@ -43,51 +42,33 @@ export default function HomeScreen() {
     );
   }
 
-  const {
-    orderedPlans,
-    selectedPlanId,
-    mostRecentPlan,
-    mostRecentPlanTodayWorkout,
-    lastSession,
-    weeklyCompleted,
-    weeklyTotal,
-  } = snapshot;
+  const { orderedPlans, selectedPlanId, topPlan, topPlanStartAction, lastSession, weeklyCompleted, weeklyTotal } =
+    snapshot;
 
-  const cta = mostRecentPlan
-    ? resolveRecentRoutineCta({
-        totalDayCount: mostRecentPlan.totalDayCount,
-        hasTodayWorkout: mostRecentPlanTodayWorkout !== null,
-      })
-    : null;
-
-  function handleRecentRoutinePress() {
-    if (!mostRecentPlan || !cta) return;
-    if (cta.kind === 'iniciar' && mostRecentPlanTodayWorkout) {
-      startWorkout({
-        id: mostRecentPlanTodayWorkout.day.id,
-        planId: mostRecentPlanTodayWorkout.planId,
-        name: mostRecentPlanTodayWorkout.day.name,
-      });
-      return;
+  function handleComecarTreino() {
+    if (!topPlan || !topPlanStartAction) return;
+    if (topPlanStartAction.kind === 'direct') {
+      startWorkout({ id: topPlanStartAction.dayId, planId: topPlan.plan.id, name: topPlanStartAction.dayName });
+    } else {
+      router.push(`/planos/${topPlan.plan.id}/escolher-treino`);
     }
-    router.push(`/planos/${mostRecentPlan.plan.id}`);
   }
 
   return (
     <Screen>
       <Text style={styles.greeting}>Olá! Bora treinar?</Text>
 
-      {mostRecentPlan && cta && (
+      {topPlan && topPlanStartAction && (
         <View style={styles.card}>
           <Text style={styles.cardLabel}>Sua rotina mais recente</Text>
-          <Text style={styles.cardTitle}>{mostRecentPlan.plan.name}</Text>
+          <Text style={styles.cardTitle}>{topPlan.plan.name}</Text>
           <Text style={styles.cardMeta}>
-            {mostRecentPlan.totalDayCount} {mostRecentPlan.totalDayCount === 1 ? 'treino' : 'treinos'}
-            {mostRecentPlan.weekdays.length > 0
-              ? ` · ${mostRecentPlan.weekdays.map((d) => WEEKDAY_ABBR_LABELS[d].toUpperCase()).join(' • ')}`
+            {topPlan.totalDayCount} {topPlan.totalDayCount === 1 ? 'treino' : 'treinos'}
+            {topPlan.weekdays.length > 0
+              ? ` · ${topPlan.weekdays.map((d) => WEEKDAY_ABBR_LABELS[d].toUpperCase()).join(' • ')}`
               : ''}
           </Text>
-          <PrimaryButton label={cta.label} disabled={starting} onPress={handleRecentRoutinePress} />
+          <PrimaryButton label="Começar treino" disabled={starting} onPress={handleComecarTreino} />
         </View>
       )}
 

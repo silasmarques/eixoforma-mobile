@@ -178,23 +178,101 @@ describe('getHomeSnapshot', () => {
 
     // segunda: a active (não o draft) ainda tem weekday=1 pra essa rotina — deveria aparecer hoje
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.mostRecentPlan?.plan.id).toBe(plan.id);
-    expect(snapshot.mostRecentPlanTodayWorkout?.planId).toBe(plan.id);
-    expect(snapshot.mostRecentPlanTodayWorkout?.day.name).toBe('Treino V1');
+    expect(snapshot.topPlan?.plan.id).toBe(plan.id);
+    // plano tem só 1 treino → resolução direct, sem precisar de weekday. O
+    // dayId deve ser o da versão ACTIVE, não o do draft (ids diferentes por
+    // causa do copy-on-write) — por isso comparamos só kind/dayName aqui.
+    expect(snapshot.topPlanStartAction?.kind).toBe('direct');
+    expect(snapshot.topPlanStartAction).toMatchObject({ dayName: 'Treino V1' });
+    if (snapshot.topPlanStartAction?.kind === 'direct') {
+      expect(snapshot.topPlanStartAction.dayId).not.toBe(draftDays[0].id);
+    }
   });
 
   it('10. weekday correto resolve o treino de hoje da rotina mais recente (segunda → Treino A, terça → Treino B)', async () => {
-    // seed é o único plano — é o "mais recente" por definição
+    // seed é o único plano — é o "mais recente" por definição; 3 treinos, 1 match por dia → direct
     const monday = await getHomeSnapshot(client, MONDAY);
-    expect(monday.mostRecentPlanTodayWorkout?.day.id).toBe(DAY_A);
+    expect(monday.topPlanStartAction).toMatchObject({ kind: 'direct', dayId: DAY_A });
 
     const tuesday = await getHomeSnapshot(client, TUESDAY);
-    expect(tuesday.mostRecentPlanTodayWorkout?.day.id).toBe(DAY_B);
+    expect(tuesday.topPlanStartAction).toMatchObject({ kind: 'direct', dayId: DAY_B });
   });
 
-  it('11. plano sem rotina hoje não inventa treino (domingo não tem rotina no seed)', async () => {
+  it('11. sem treino pra hoje (domingo não tem rotina no seed) e vários treinos → choose, nunca escolhe arbitrariamente', async () => {
     const snapshot = await getHomeSnapshot(client, SUNDAY);
-    expect(snapshot.mostRecentPlanTodayWorkout).toBeNull();
+    expect(snapshot.topPlanStartAction).toEqual({ kind: 'choose' });
+  });
+
+  it('21. mais de um treino bate com o weekday de hoje → choose (fim a fim, não só na função pura)', async () => {
+    const { plan, draftVersion } = await planService.createPlan(client, {
+      name: 'Dois treinos na segunda',
+      origin: 'personal',
+    });
+    const dayA = await prescriptionService.addDay(client, plan.id, {
+      order: 1,
+      name: 'Treino A',
+      description: '',
+      muscleGroups: ['chest'],
+      weekdays: [1],
+    });
+    const dayB = await prescriptionService.addDay(client, plan.id, {
+      order: 2,
+      name: 'Treino B',
+      description: '',
+      muscleGroups: ['back'],
+      weekdays: [1],
+    });
+    for (const day of [dayA, dayB]) {
+      const exercise = await prescriptionService.addPrescribedExercise(client, plan.id, day.id, {
+        exerciseId: 'ex_supino_reto_barra',
+        order: 1,
+        coachNote: null,
+      });
+      await prescriptionService.addPrescribedSet(client, plan.id, exercise.id, {
+        order: 1,
+        targetReps: 10,
+        repRangeMin: null,
+        repRangeMax: null,
+        targetLoadKg: 20,
+        restSeconds: 60,
+        technique: 'normal',
+        note: null,
+      });
+    }
+    await planService.activatePlanVersion(client, { planId: plan.id, versionId: draftVersion.id });
+
+    const snapshot = await getHomeSnapshot(client, MONDAY);
+    expect(snapshot.topPlan?.plan.id).toBe(plan.id);
+    expect(snapshot.topPlanStartAction).toEqual({ kind: 'choose' });
+  });
+
+  it('19. plano só com draft (nunca ativado) não vira topPlan, mesmo sendo mais recente que um plano active', async () => {
+    const { plan: activePlan } = await buildActivatedPersonalPlan(client, 'Ativo mais antigo');
+    // plano criado DEPOIS, mas nunca ativado (fica só com a v1 draft)
+    const { plan: draftPlan } = await planService.createPlan(client, {
+      name: 'Rascunho mais recente',
+      origin: 'personal',
+    });
+    await setCreatedAt(client, activePlan.id, '2026-09-10T09:00:00.000Z');
+    await setCreatedAt(client, draftPlan.id, '2026-09-24T09:00:00.000Z');
+
+    const snapshot = await getHomeSnapshot(client, MONDAY);
+    // aparece em "Meus Treinos" (orderedPlans não filtra por status)...
+    expect(snapshot.orderedPlans.map((s) => s.plan.id)).toContain(draftPlan.id);
+    expect(snapshot.orderedPlans[0]?.plan.id).toBe(draftPlan.id); // é o mais recente da lista
+    // ...mas NUNCA no destaque do topo, mesmo sendo o mais recente
+    expect(snapshot.topPlan?.plan.id).toBe(activePlan.id);
+    expect(snapshot.topPlan?.plan.id).not.toBe(draftPlan.id);
+  });
+
+  it('20. nenhum plano tem versão active → topPlan é null (card do topo não aparece)', async () => {
+    const emptyClient = await setupTestDatabase({ seeded: false });
+    await planService.createPlan(emptyClient, { name: 'Só rascunho', origin: 'personal' });
+
+    const snapshot = await getHomeSnapshot(emptyClient, MONDAY);
+    expect(snapshot.topPlan).toBeNull();
+    expect(snapshot.topPlanStartAction).toBeNull();
+    expect(snapshot.orderedPlans).toHaveLength(1); // continua em Meus Treinos
   });
 
   it('12. Home funciona com zero planos', async () => {
@@ -203,15 +281,15 @@ describe('getHomeSnapshot', () => {
 
     expect(snapshot.orderedPlans).toEqual([]);
     expect(snapshot.selectedPlanId).toBeNull();
-    expect(snapshot.mostRecentPlan).toBeNull();
-    expect(snapshot.mostRecentPlanTodayWorkout).toBeNull();
+    expect(snapshot.topPlan).toBeNull();
+    expect(snapshot.topPlanStartAction).toBeNull();
     expect(snapshot.weeklyTotal).toBe(0);
   });
 
   it('13. Home funciona com um único plano (seed padrão)', async () => {
     const snapshot = await getHomeSnapshot(client, MONDAY);
     expect(snapshot.orderedPlans).toHaveLength(1);
-    expect(snapshot.mostRecentPlan?.plan.id).toBe(PLAN_ID);
+    expect(snapshot.topPlan?.plan.id).toBe(PLAN_ID);
   });
 
   it('14. Home funciona com múltiplos planos', async () => {
@@ -243,7 +321,7 @@ describe('getHomeSnapshot', () => {
     expect(posMid).toBeLessThan(posOld);
     expect(snapshot.selectedPlanId).toBe(planOld.id); // seleção preservada...
     expect(snapshot.orderedPlans[0]?.plan.id).toBe(planNew.id); // ...mas não afeta a ordem
-    expect(snapshot.mostRecentPlan?.plan.id).toBe(planNew.id); // destaque = mais recente, não o selecionado
+    expect(snapshot.topPlan?.plan.id).toBe(planNew.id); // destaque = mais recente, não o selecionado
   });
 
   it('18. rotina recém-criada aparece imediatamente como primeiro card', async () => {
@@ -255,7 +333,7 @@ describe('getHomeSnapshot', () => {
     const after = await getHomeSnapshot(client, MONDAY);
     expect(after.orderedPlans[0]?.plan.id).toBe(plan.id);
     expect(after.orderedPlans[0]?.plan.id).not.toBe(beforeFirstId);
-    expect(after.mostRecentPlan?.plan.id).toBe(plan.id);
+    expect(after.topPlan?.plan.id).toBe(plan.id);
   });
 
   it('sem sessão ativa: activeSession é null', async () => {

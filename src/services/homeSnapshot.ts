@@ -2,6 +2,7 @@ import { getWorkoutDaySummaries } from '@/repositories/workoutPlanRepository';
 import { findActiveSession, getSessionHistory } from '@/repositories/workoutSessionRepository';
 import { planService } from './planService';
 import { currentWeekday } from '@/utils/weekdayLabels';
+import { resolveWorkoutStartAction, type WorkoutStartAction } from '@/utils/resolveWorkoutStartAction';
 import { sortPlansByCreatedAtDesc } from '@/utils/sortPlansByCreatedAt';
 import type { WorkoutDaySummary, WorkoutPlan, WorkoutPlanVersion } from '@/domain/workoutPlan';
 import type { SQLiteClient } from '@/database/sqliteClient';
@@ -26,21 +27,26 @@ export interface PlanHomeSummary {
   weekdays: number[];
 }
 
-export interface TodayWorkout {
-  day: WorkoutDaySummary;
-  planId: string;
-  planName: string;
-}
-
 export interface HomeSnapshot {
-  /** "Meus Treinos" — TODOS os WorkoutPlan exibíveis, mais recente criado primeiro. Nunca ordenado por selected_plan_id. */
+  /** "Meus Treinos" — TODOS os WorkoutPlan exibíveis (ativos e rascunho), mais recente criado primeiro. Nunca ordenado por selected_plan_id. */
   orderedPlans: PlanHomeSummary[];
-  /** Preferência/seleção atual (app_preferences.selected_plan_id) — só pra destaque visual, não afeta a ordem de `orderedPlans`. */
+  /** Preferência/seleção atual (app_preferences.selected_plan_id) — só pra destaque visual em "Meus Treinos", não afeta a ordem nem o card do topo. */
   selectedPlanId: string | null;
-  /** WorkoutPlan mais recentemente criado — usado pelo card de destaque no topo da Home, independente de selected_plan_id. */
-  mostRecentPlan: PlanHomeSummary | null;
-  /** Treino de hoje da rotina mais recente, só a partir da versão active — nunca draft. */
-  mostRecentPlanTodayWorkout: TodayWorkout | null;
+  /**
+   * Card de destaque do topo — a rotina mais recentemente criada QUE JÁ TEM
+   * uma versão active (rascunhos nunca entram aqui, mesmo que sejam mais
+   * recentes que a última rotina ativada). `null` quando nenhum plano tem
+   * versão active.
+   */
+  topPlan: PlanHomeSummary | null;
+  /**
+   * Resolução de "Começar treino" a partir do `topPlan` — sempre calculada
+   * sobre a versão active (nunca draft) via `resolveWorkoutStartAction`.
+   * `direct` quando não há ambiguidade (1 treino só, ou exatamente 1 bate
+   * com hoje); `choose` quando é preciso perguntar qual treino. `null`
+   * apenas quando `topPlan` também é `null`.
+   */
+  topPlanStartAction: WorkoutStartAction | null;
   activeSession: WorkoutSessionSummary | null;
   lastSession: WorkoutSessionSummary | null;
   weeklyCompleted: number;
@@ -107,33 +113,32 @@ async function buildPlanHomeSummary(client: SQLiteClient, plan: WorkoutPlan): Pr
 }
 
 /**
- * Treino de hoje de UM plano específico — sempre a partir da versão active,
- * nunca draft, mesmo que a Home esteja mostrando uma prévia baseada no
- * draft em edição pra esse mesmo plano. Reaproveitado tanto pro destaque da
- * rotina mais recente quanto por qualquer outro consumidor que precise da
- * mesma resolução conservadora (nunca inventa um treino).
+ * Primeira rotina (na ordem mais-recente-primeiro já calculada) que tem uma
+ * versão active — pula rascunhos deliberadamente. Sequencial (não
+ * Promise.all) pra parar assim que encontra a primeira, sem consultar
+ * versão active de planos que nem vão ser usados.
  */
-async function resolveTodayWorkoutForPlan(
+async function findMostRecentActivePlan(
   client: SQLiteClient,
-  plan: WorkoutPlan | null,
-  referenceDate: Date
-): Promise<TodayWorkout | null> {
-  if (!plan) return null;
-  const activeVersion = await planService.getActiveVersion(client, plan.id);
-  if (!activeVersion) return null;
-  const activeDays = await getWorkoutDaySummaries(client, activeVersion.id);
-  const weekday = currentWeekday(referenceDate);
-  const todayDay = activeDays.find((day) => day.weekdays.includes(weekday)) ?? null;
-  if (!todayDay) return null;
-  return { day: todayDay, planId: plan.id, planName: plan.name };
+  sortedPlans: readonly WorkoutPlan[]
+): Promise<{ plan: WorkoutPlan; activeDays: WorkoutDaySummary[] } | null> {
+  for (const plan of sortedPlans) {
+    const activeVersion = await planService.getActiveVersion(client, plan.id);
+    if (activeVersion) {
+      const activeDays = await getWorkoutDaySummaries(client, activeVersion.id);
+      return { plan, activeDays };
+    }
+  }
+  return null;
 }
 
 /**
  * "Meus Treinos" é ordenado por criação (mais recente primeiro), critério
  * independente de app_preferences.selected_plan_id — que continua existindo
- * só como preferência/seleção (destaque visual, "Progresso semanal"), nunca
- * como critério de ordem. Um WorkoutPlan aparece uma única vez
- * (WorkoutPlanVersion é só detalhe interno de qual prévia mostrar).
+ * só como preferência/seleção (destaque visual em "Meus Treinos",
+ * "Progresso semanal"), nunca como critério de ordem nem fonte do card do
+ * topo. Um WorkoutPlan aparece uma única vez (WorkoutPlanVersion é só
+ * detalhe interno de qual prévia mostrar).
  */
 export async function getHomeSnapshot(
   client: SQLiteClient,
@@ -151,17 +156,14 @@ export async function getHomeSnapshot(
     sortedPlanEntities.map((plan) => buildPlanHomeSummary(client, plan))
   );
 
-  const mostRecentPlanEntity = sortedPlanEntities[0] ?? null;
-  const mostRecentPlan = orderedPlans[0] ?? null;
-  const mostRecentPlanTodayWorkout = await resolveTodayWorkoutForPlan(
-    client,
-    mostRecentPlanEntity,
-    referenceDate
-  );
+  const mostRecentActive = await findMostRecentActivePlan(client, sortedPlanEntities);
+  const topPlan = mostRecentActive ? await buildPlanHomeSummary(client, mostRecentActive.plan) : null;
+  const topPlanStartAction: WorkoutStartAction | null = mostRecentActive
+    ? resolveWorkoutStartAction(mostRecentActive.activeDays, currentWeekday(referenceDate))
+    : null;
 
   // Progresso semanal continua relativo ao plano SELECIONADO (preferência de
-  // treino atual), não ao mais recentemente criado — são preocupações
-  // diferentes.
+  // treino atual), não ao destaque do topo — são preocupações diferentes.
   const selectedActiveVersion = selectedPlanEntity
     ? await planService.getActiveVersion(client, selectedPlanEntity.id)
     : null;
@@ -176,8 +178,8 @@ export async function getHomeSnapshot(
   return {
     orderedPlans,
     selectedPlanId: selectedPlanEntity?.id ?? null,
-    mostRecentPlan,
-    mostRecentPlanTodayWorkout,
+    topPlan,
+    topPlanStartAction,
     activeSession,
     lastSession: planHistory[0] ?? history[0] ?? null,
     weeklyCompleted: weekly.completed,

@@ -17,9 +17,14 @@ import {
 import { getAllExercises } from '@/repositories/exerciseRepository';
 import { planService } from '@/services/planService';
 import { prescriptionService } from '@/services/prescriptionService';
+import { workoutSessionService } from '@/services/workoutSessionService';
+import { useStartWorkout } from '@/hooks/useStartWorkout';
 import { DraftNotDiscardableError, IncompletePlanVersionError } from '@/domain/prescriptionErrors';
+import { currentWeekday } from '@/utils/weekdayLabels';
+import { resolveWorkoutStartAction } from '@/utils/resolveWorkoutStartAction';
 import { colors, spacing, typography } from '@/theme/tokens';
 import type { WorkoutDaySummary, WorkoutPlan, WorkoutPlanVersion } from '@/domain/workoutPlan';
+import type { WorkoutSessionSummary } from '@/domain/workoutSession';
 
 const EXERCISE_PREVIEW_LIMIT = 3;
 
@@ -27,10 +32,13 @@ export default function PlanMontagemScreen() {
   const { planId } = useLocalSearchParams<{ planId: string }>();
   const client = useDatabase();
   const router = useRouter();
+  const { startWorkout, starting } = useStartWorkout();
 
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [version, setVersion] = useState<WorkoutPlanVersion | null>(null);
   const [hasActiveVersion, setHasActiveVersion] = useState(false);
+  const [activeDays, setActiveDays] = useState<WorkoutDaySummary[]>([]);
+  const [activeSession, setActiveSession] = useState<WorkoutSessionSummary | null>(null);
   const [days, setDays] = useState<WorkoutDaySummary[]>([]);
   const [previewsByDayId, setPreviewsByDayId] = useState<Record<string, string[]>>({});
   const [busy, setBusy] = useState(false);
@@ -44,6 +52,10 @@ export default function PlanMontagemScreen() {
     setVersion(viewable);
     const active = await getVersionByStatus(client, planId, 'active');
     setHasActiveVersion(!!active);
+    setActiveDays(active ? await getWorkoutDaySummaries(client, active.id) : []);
+
+    const session = await workoutSessionService.findActiveSession(client);
+    setActiveSession(session && session.planId === planId ? session : null);
 
     if (viewable) {
       const summaries = await getWorkoutDaySummaries(client, viewable.id);
@@ -137,6 +149,15 @@ export default function PlanMontagemScreen() {
     }
   }
 
+  function handleStartWorkout() {
+    const action = resolveWorkoutStartAction(activeDays, currentWeekday());
+    if (action.kind === 'direct') {
+      startWorkout({ id: action.dayId, planId, name: action.dayName });
+    } else {
+      router.push(`/planos/${planId}/escolher-treino`);
+    }
+  }
+
   async function handleMoveDay(dayId: string, direction: -1 | 1) {
     const index = days.findIndex((d) => d.id === dayId);
     const target = index + direction;
@@ -207,6 +228,18 @@ export default function PlanMontagemScreen() {
         <Text style={styles.readOnlyBanner}>Somente leitura — prescrito pelo treinador.</Text>
       )}
 
+      {activeSession ? (
+        <PrimaryButton
+          label="Continuar treino"
+          onPress={() => router.push(`/sessao/${activeSession.id}`)}
+        />
+      ) : (
+        hasActiveVersion &&
+        activeDays.length > 0 && (
+          <PrimaryButton label="Iniciar treino" onPress={handleStartWorkout} disabled={starting} />
+        )
+      )}
+
       {isPersonal && !isEditable && (
         <PrimaryButton label="Editar rotina" onPress={handleEnterEditMode} disabled={busy} />
       )}
@@ -246,8 +279,13 @@ export default function PlanMontagemScreen() {
         ))
       )}
 
+      {isEditable && hasActiveVersion && (
+        <Text style={styles.draftHint}>
+          Suas alterações ficam em rascunho até você ativar a nova versão.
+        </Text>
+      )}
       {isEditable && (
-        <PrimaryButton label="Usar esta rotina" onPress={handleActivate} disabled={busy} />
+        <PrimaryButton label="Ativar rotina" onPress={handleActivate} disabled={busy} />
       )}
       {isEditable && hasActiveVersion && (
         <PrimaryButton
@@ -267,6 +305,7 @@ const styles = StyleSheet.create({
   title: { ...typography.title, color: colors.textPrimary },
   goal: { ...typography.body, color: colors.textSecondary },
   sectionTitle: { ...typography.subtitle, color: colors.textPrimary },
+  draftHint: { ...typography.caption, color: colors.textMuted },
   readOnlyBanner: {
     ...typography.caption,
     color: colors.textMuted,
