@@ -6,11 +6,11 @@ import { EmptyState } from '@/components/EmptyState';
 import { PlanHomeCard } from '@/components/PlanHomeCard';
 import { PrimaryButton } from '@/components/PrimaryButton';
 import { Screen } from '@/components/Screen';
-import { Tag } from '@/components/Tag';
 import { useDatabase } from '@/database/DatabaseProvider';
 import { useStartWorkout } from '@/hooks/useStartWorkout';
 import { getHomeSnapshot, type HomeSnapshot } from '@/services/homeSnapshot';
-import { MUSCLE_GROUP_LABELS } from '@/domain/muscleGroup';
+import { resolveRecentRoutineCta } from '@/utils/recentRoutineCta';
+import { WEEKDAY_ABBR_LABELS } from '@/utils/weekdayLabels';
 import { colors, minTouchTarget, radius, spacing, typography } from '@/theme/tokens';
 
 const CARD_PEEK = 28;
@@ -43,59 +43,51 @@ export default function HomeScreen() {
     );
   }
 
-  const { selectedPlan, todayWorkout, recentPlans, activeSession, lastSession, weeklyCompleted, weeklyTotal } =
-    snapshot;
+  const {
+    orderedPlans,
+    selectedPlanId,
+    mostRecentPlan,
+    mostRecentPlanTodayWorkout,
+    lastSession,
+    weeklyCompleted,
+    weeklyTotal,
+  } = snapshot;
+
+  const cta = mostRecentPlan
+    ? resolveRecentRoutineCta({
+        totalDayCount: mostRecentPlan.totalDayCount,
+        hasTodayWorkout: mostRecentPlanTodayWorkout !== null,
+      })
+    : null;
+
+  function handleRecentRoutinePress() {
+    if (!mostRecentPlan || !cta) return;
+    if (cta.kind === 'iniciar' && mostRecentPlanTodayWorkout) {
+      startWorkout({
+        id: mostRecentPlanTodayWorkout.day.id,
+        planId: mostRecentPlanTodayWorkout.planId,
+        name: mostRecentPlanTodayWorkout.day.name,
+      });
+      return;
+    }
+    router.push(`/planos/${mostRecentPlan.plan.id}`);
+  }
 
   return (
     <Screen>
       <Text style={styles.greeting}>Olá! Bora treinar?</Text>
 
-      {activeSession && (
-        <View style={styles.bannerCard} accessibilityRole="summary">
-          <Text style={styles.bannerTitle}>Você possui um treino em andamento</Text>
-          <Text style={styles.bannerSubtitle}>{activeSession.dayName}</Text>
-          <PrimaryButton
-            label="Continuar treino"
-            onPress={() => router.push(`/sessao/${activeSession.id}`)}
-          />
-        </View>
-      )}
-
-      {!activeSession && todayWorkout && (
+      {mostRecentPlan && cta && (
         <View style={styles.card}>
-          <Text style={styles.cardLabel}>Hoje</Text>
-          <Text style={styles.cardTitle}>{todayWorkout.day.name}</Text>
-          <View style={styles.tagRow}>
-            {todayWorkout.day.muscleGroups.map((group) => (
-              <Tag key={group} label={MUSCLE_GROUP_LABELS[group]} />
-            ))}
-          </View>
+          <Text style={styles.cardLabel}>Sua rotina mais recente</Text>
+          <Text style={styles.cardTitle}>{mostRecentPlan.plan.name}</Text>
           <Text style={styles.cardMeta}>
-            {todayWorkout.day.exerciseCount} exercícios · ~{todayWorkout.day.estimatedDurationMinutes} min
+            {mostRecentPlan.totalDayCount} {mostRecentPlan.totalDayCount === 1 ? 'treino' : 'treinos'}
+            {mostRecentPlan.weekdays.length > 0
+              ? ` · ${mostRecentPlan.weekdays.map((d) => WEEKDAY_ABBR_LABELS[d].toUpperCase()).join(' • ')}`
+              : ''}
           </Text>
-          <PrimaryButton
-            label="Iniciar treino"
-            disabled={starting}
-            onPress={() =>
-              startWorkout({
-                id: todayWorkout.day.id,
-                planId: todayWorkout.planId,
-                name: todayWorkout.day.name,
-              })
-            }
-          />
-        </View>
-      )}
-
-      {!activeSession && !todayWorkout && selectedPlan && (
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Hoje</Text>
-          <Text style={styles.cardMeta}>Nenhuma rotina marcada pra hoje.</Text>
-          <PrimaryButton
-            label="Ver rotina atual"
-            variant="secondary"
-            onPress={() => router.push(`/planos/${selectedPlan.plan.id}`)}
-          />
+          <PrimaryButton label={cta.label} disabled={starting} onPress={handleRecentRoutinePress} />
         </View>
       )}
 
@@ -115,7 +107,7 @@ export default function HomeScreen() {
         </Pressable>
       </View>
 
-      {selectedPlan || recentPlans.length > 0 ? (
+      {orderedPlans.length > 0 ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -124,18 +116,13 @@ export default function HomeScreen() {
           snapToAlignment="start"
           contentContainerStyle={styles.horizontalList}
         >
-          {selectedPlan && (
-            <View style={{ width: cardWidth }}>
-              <PlanHomeCard
-                summary={selectedPlan}
-                highlighted
-                onPress={() => router.push(`/planos/${selectedPlan.plan.id}`)}
-              />
-            </View>
-          )}
-          {recentPlans.map((summary) => (
+          {orderedPlans.map((summary) => (
             <View key={summary.plan.id} style={{ width: cardWidth }}>
-              <PlanHomeCard summary={summary} onPress={() => router.push(`/planos/${summary.plan.id}`)} />
+              <PlanHomeCard
+                summary={summary}
+                highlighted={summary.plan.id === selectedPlanId}
+                onPress={() => router.push(`/planos/${summary.plan.id}`)}
+              />
             </View>
           ))}
         </ScrollView>
@@ -195,15 +182,6 @@ const styles = StyleSheet.create({
   cardLabel: { ...typography.caption, color: colors.textMuted },
   cardTitle: { ...typography.title, color: colors.textPrimary },
   cardMeta: { ...typography.body, color: colors.textSecondary },
-  tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
-  bannerCard: {
-    backgroundColor: colors.surfaceRaised,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
-  bannerTitle: { ...typography.subtitle, color: colors.textPrimary },
-  bannerSubtitle: { ...typography.body, color: colors.textSecondary },
   rowCards: { flexDirection: 'row', gap: spacing.md },
   halfCard: { flex: 1 },
   sectionHeader: {

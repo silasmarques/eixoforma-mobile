@@ -65,6 +65,11 @@ async function buildActivatedPersonalPlan(
   return { plan, day };
 }
 
+/** Força um created_at determinístico — insertPlan usa `new Date().toISOString()` no momento da criação. */
+async function setCreatedAt(client: SQLiteClient, planId: string, isoDate: string): Promise<void> {
+  await client.runAsync('UPDATE workout_plans SET created_at = ? WHERE id = ?;', [isoDate, planId]);
+}
+
 describe('computeWeeklyProgress', () => {
   it('conta dias distintos concluídos dentro da semana atual', () => {
     const history = [
@@ -104,9 +109,9 @@ describe('getHomeSnapshot', () => {
 
   it('1. Home mostra WorkoutPlan, não WorkoutPlanVersion — um resumo por plano', async () => {
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.selectedPlan?.plan.id).toBe(PLAN_ID);
+    expect(snapshot.orderedPlans[0]?.plan.id).toBe(PLAN_ID);
     // PlanHomeSummary não tem nenhum campo de versão "solto" fora de `version`
-    expect(snapshot.selectedPlan).not.toHaveProperty('versionId');
+    expect(snapshot.orderedPlans[0]).not.toHaveProperty('versionId');
   });
 
   it('2 e 16. plano com v1 superseded + v2 active aparece uma única vez', async () => {
@@ -124,52 +129,47 @@ describe('getHomeSnapshot', () => {
     ]);
     expect(versions).toHaveLength(2);
 
-    await planService.selectPlan(client, plan.id);
     const snapshot = await getHomeSnapshot(client, MONDAY);
-
-    const matches = [snapshot.selectedPlan, ...snapshot.recentPlans].filter(
-      (summary) => summary?.plan.id === plan.id
-    );
+    const matches = snapshot.orderedPlans.filter((summary) => summary.plan.id === plan.id);
     expect(matches).toHaveLength(1);
   });
 
   it('3. dois WorkoutPlan distintos aparecem como dois planos', async () => {
     const { plan: planA } = await buildActivatedPersonalPlan(client, 'Plano A');
     const { plan: planB } = await buildActivatedPersonalPlan(client, 'Plano B');
-    await planService.selectPlan(client, planA.id);
 
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    const ids = [snapshot.selectedPlan, ...snapshot.recentPlans].map((s) => s?.plan.id);
+    const ids = snapshot.orderedPlans.map((s) => s.plan.id);
     expect(ids).toContain(planA.id);
     expect(ids).toContain(planB.id);
     expect(new Set(ids).size).toBe(ids.length); // sem duplicata
   });
 
-  it('4. selected_plan_id recebe destaque correto (selectedPlan)', async () => {
+  it('4. selected_plan_id recebe destaque correto (selectedPlanId)', async () => {
     const { plan } = await buildActivatedPersonalPlan(client, 'Meu plano');
     await planService.selectPlan(client, plan.id);
 
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.selectedPlan?.plan.id).toBe(plan.id);
+    expect(snapshot.selectedPlanId).toBe(plan.id);
   });
 
   it('5. plano prescribed aparece com origin correto (read-only na UI)', async () => {
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.selectedPlan?.plan.origin).toBe('prescribed');
+    const demo = snapshot.orderedPlans.find((s) => s.plan.id === PLAN_ID);
+    expect(demo?.plan.origin).toBe('prescribed');
   });
 
   it('6. plano personal expõe origin correto (caminho de edição na UI)', async () => {
     const { plan } = await buildActivatedPersonalPlan(client, 'Editável');
-    await planService.selectPlan(client, plan.id);
 
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.selectedPlan?.plan.origin).toBe('personal');
+    const found = snapshot.orderedPlans.find((s) => s.plan.id === plan.id);
+    expect(found?.plan.origin).toBe('personal');
   });
 
-  it('8 e 9. treino de hoje só considera a versão active — nunca um draft', async () => {
-    // plano ativo com a rotina de segunda (weekday=1)
+  it('8 e 9. treino de hoje (da rotina mais recente) só considera a versão active — nunca um draft', async () => {
+    // plano ativo com a rotina de segunda (weekday=1) — mais recente que o seed
     const { plan } = await buildActivatedPersonalPlan(client, 'Plano com draft por cima', 'Treino V1', [1]);
-    await planService.selectPlan(client, plan.id);
 
     // cria um draft por cima (copy-on-write) e muda o weekday dessa MESMA rotina pra terça
     const editable = await prescriptionService.getEditableVersion(client, plan.id);
@@ -178,47 +178,84 @@ describe('getHomeSnapshot', () => {
 
     // segunda: a active (não o draft) ainda tem weekday=1 pra essa rotina — deveria aparecer hoje
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.todayWorkout?.planId).toBe(plan.id);
-    expect(snapshot.todayWorkout?.day.name).toBe('Treino V1');
+    expect(snapshot.mostRecentPlan?.plan.id).toBe(plan.id);
+    expect(snapshot.mostRecentPlanTodayWorkout?.planId).toBe(plan.id);
+    expect(snapshot.mostRecentPlanTodayWorkout?.day.name).toBe('Treino V1');
   });
 
-  it('10. weekday correto resolve a rotina de hoje (segunda → Treino A, terça → Treino B)', async () => {
+  it('10. weekday correto resolve o treino de hoje da rotina mais recente (segunda → Treino A, terça → Treino B)', async () => {
+    // seed é o único plano — é o "mais recente" por definição
     const monday = await getHomeSnapshot(client, MONDAY);
-    expect(monday.todayWorkout?.day.id).toBe(DAY_A);
+    expect(monday.mostRecentPlanTodayWorkout?.day.id).toBe(DAY_A);
 
     const tuesday = await getHomeSnapshot(client, TUESDAY);
-    expect(tuesday.todayWorkout?.day.id).toBe(DAY_B);
+    expect(tuesday.mostRecentPlanTodayWorkout?.day.id).toBe(DAY_B);
   });
 
   it('11. plano sem rotina hoje não inventa treino (domingo não tem rotina no seed)', async () => {
     const snapshot = await getHomeSnapshot(client, SUNDAY);
-    expect(snapshot.todayWorkout).toBeNull();
+    expect(snapshot.mostRecentPlanTodayWorkout).toBeNull();
   });
 
   it('12. Home funciona com zero planos', async () => {
     const emptyClient = await setupTestDatabase({ seeded: false });
     const snapshot = await getHomeSnapshot(emptyClient, MONDAY);
 
-    expect(snapshot.selectedPlan).toBeNull();
-    expect(snapshot.todayWorkout).toBeNull();
-    expect(snapshot.recentPlans).toEqual([]);
+    expect(snapshot.orderedPlans).toEqual([]);
+    expect(snapshot.selectedPlanId).toBeNull();
+    expect(snapshot.mostRecentPlan).toBeNull();
+    expect(snapshot.mostRecentPlanTodayWorkout).toBeNull();
     expect(snapshot.weeklyTotal).toBe(0);
   });
 
   it('13. Home funciona com um único plano (seed padrão)', async () => {
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.selectedPlan).not.toBeNull();
-    expect(snapshot.recentPlans).toEqual([]);
+    expect(snapshot.orderedPlans).toHaveLength(1);
+    expect(snapshot.mostRecentPlan?.plan.id).toBe(PLAN_ID);
   });
 
-  it('14. Home funciona com múltiplos planos (selecionado + recentes)', async () => {
+  it('14. Home funciona com múltiplos planos', async () => {
     await buildActivatedPersonalPlan(client, 'Plano extra 1');
     await buildActivatedPersonalPlan(client, 'Plano extra 2');
-    await planService.selectPlan(client, PLAN_ID); // seleção explícita — sem isso o fallback pega o mais recente
 
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.selectedPlan?.plan.id).toBe(PLAN_ID);
-    expect(snapshot.recentPlans.length).toBeGreaterThanOrEqual(2);
+    expect(snapshot.orderedPlans.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('17. Meus Treinos ordenado por criação, mais recente primeiro — independente de selected_plan_id', async () => {
+    const { plan: planOld } = await buildActivatedPersonalPlan(client, 'Rotina 10/09');
+    const { plan: planMid } = await buildActivatedPersonalPlan(client, 'Rotina 20/09');
+    const { plan: planNew } = await buildActivatedPersonalPlan(client, 'Rotina 24/09');
+    await setCreatedAt(client, planOld.id, '2026-09-10T09:00:00.000Z');
+    await setCreatedAt(client, planMid.id, '2026-09-20T09:00:00.000Z');
+    await setCreatedAt(client, planNew.id, '2026-09-24T09:00:00.000Z');
+
+    // seleciona a mais ANTIGA — não deve mudar a ordem visual
+    await planService.selectPlan(client, planOld.id);
+
+    const snapshot = await getHomeSnapshot(client, MONDAY);
+    const ids = snapshot.orderedPlans.map((s) => s.plan.id);
+    const posNew = ids.indexOf(planNew.id);
+    const posMid = ids.indexOf(planMid.id);
+    const posOld = ids.indexOf(planOld.id);
+
+    expect(posNew).toBeLessThan(posMid);
+    expect(posMid).toBeLessThan(posOld);
+    expect(snapshot.selectedPlanId).toBe(planOld.id); // seleção preservada...
+    expect(snapshot.orderedPlans[0]?.plan.id).toBe(planNew.id); // ...mas não afeta a ordem
+    expect(snapshot.mostRecentPlan?.plan.id).toBe(planNew.id); // destaque = mais recente, não o selecionado
+  });
+
+  it('18. rotina recém-criada aparece imediatamente como primeiro card', async () => {
+    const before = await getHomeSnapshot(client, MONDAY);
+    const beforeFirstId = before.orderedPlans[0]?.plan.id;
+
+    const { plan } = await buildActivatedPersonalPlan(client, 'Recém-criada');
+
+    const after = await getHomeSnapshot(client, MONDAY);
+    expect(after.orderedPlans[0]?.plan.id).toBe(plan.id);
+    expect(after.orderedPlans[0]?.plan.id).not.toBe(beforeFirstId);
+    expect(after.mostRecentPlan?.plan.id).toBe(plan.id);
   });
 
   it('sem sessão ativa: activeSession é null', async () => {
@@ -227,7 +264,7 @@ describe('getHomeSnapshot', () => {
     expect(snapshot.lastSession).toBeNull();
   });
 
-  it('com sessão ativa: activeSession reflete a sessão em andamento', async () => {
+  it('com sessão ativa: activeSession reflete a sessão em andamento (dado preservado no snapshot mesmo sem banner na Home)', async () => {
     const created = await createSession(client, {
       planId: PLAN_ID,
       planVersionId: PLAN_VERSION_ID,
@@ -253,7 +290,8 @@ describe('getHomeSnapshot', () => {
 
   it('o plano selecionado traz até 3 rotinas como prévia, não a lista de exercícios', async () => {
     const snapshot = await getHomeSnapshot(client, MONDAY);
-    expect(snapshot.selectedPlan?.dayPreviews.length).toBeLessThanOrEqual(3);
-    expect(snapshot.selectedPlan?.totalDayCount).toBe(3);
+    const demo = snapshot.orderedPlans.find((s) => s.plan.id === PLAN_ID) as { dayPreviews: unknown[]; totalDayCount: number };
+    expect(demo.dayPreviews.length).toBeLessThanOrEqual(3);
+    expect(demo.totalDayCount).toBe(3);
   });
 });
