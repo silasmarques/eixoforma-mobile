@@ -1,4 +1,4 @@
-name: Lyfta Exact Download Probe
+name: Lyfta Peito Batch 19
 
 on:
   push:
@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Probe exact Lyfta source assets
+      - name: Download exact Lyfta source assets
         shell: bash
         run: |
           mkdir -p /tmp/lyfta
@@ -24,12 +24,27 @@ jobs:
           from html import unescape
 
           exercises = [
-              ("ex_supino_reto_halteres", "https://lyfta.app/exercise/dumbbell-bench-press-84"),
-              ("ex_supino_inclinado_barra", "https://www.lyfta.app/exercise/barbell-incline-bench-press-7xv"),
-              ("ex_supino_declinado_halteres", "https://www.lyfta.app/exercise/dumbbell-decline-bench-press--7zn"),
-              ("ex_crucifixo_reto_halteres", "https://www.lyfta.app/exercise/dumbbell-fly-6ha"),
-              ("ex_crucifixo_inclinado_halteres", "https://www.lyfta.app/exercise/dumbbell-incline-fly-7b3"),
+              ("ex_chest_dip","https://www.lyfta.app/exercise/chest-dip-8v0"),
+              ("ex_assisted_chest_dip","https://www.lyfta.app/exercise/assisted-chest-dip-69p"),
+              ("ex_crossover_baixo_para_cima","https://www.lyfta.app/exercise/cable-low-fly-64f"),
+              ("ex_crucifixo_em_pe_cabo","https://www.lyfta.app/exercise/cable-standing-fly-6fr"),
+              ("ex_supino_reto_maquina","https://www.lyfta.app/exercise/lever-chest-press-0u"),
+              ("ex_supino_declinado_maquina","https://www.lyfta.app/exercise/lever-decline-chest-press-48"),
+              ("ex_machine_inner_chest_press","https://www.lyfta.app/exercise/machine-inner-chest-press-49"),
+              ("ex_cable_seated_chest_press","https://www.lyfta.app/exercise/cable-seated-chest-press-7rs"),
+              ("ex_flexao_tradicional","https://lyfta.app/exercise/push-up-75j"),
+              ("ex_flexao_inclinada","https://www.lyfta.app/exercise/incline-push-up-6n5"),
+              ("ex_flexao_declinada","https://www.lyfta.app/exercise/decline-push-up-81"),
+              ("ex_flexao_pegada_aberta","https://www.lyfta.app/exercise/wide-push-up-87n"),
+              ("ex_pullover_halter","https://www.lyfta.app/exercise/dumbbell-pullover-6jv"),
+              ("ex_chest_dip_straight_bar","https://www.lyfta.app/exercise/chest-dip-on-straight-bar-7zx"),
+              ("ex_chest_press_unilateral_maquina","https://www.lyfta.app/exercise/lever-one-arm-chest-press-845"),
+              ("ex_svend_press","https://lyfta.app/exercise/dumbbell-svend-press--8r8"),
+              ("ex_supino_smith","https://www.lyfta.app/exercise/smith-bench-press-1u"),
+              ("ex_chest_press_cabo","https://www.lyfta.app/exercise/cable-standing-chest-press-6ci"),
+              ("ex_floor_press_halteres","https://lyfta.app/exercise/dumbbell-lying-on-floor-chest-press-8x7"),
           ]
+
           UA="Mozilla/5.0 AppleWebKit/605.1.15 Safari/605.1.15"
           ctx=ssl.create_default_context()
 
@@ -42,22 +57,30 @@ jobs:
               body,_,_=fetch(page_url)
               html=body.decode("utf-8","ignore")
               m=re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',html,re.S)
-              if not m: raise RuntimeError("__NEXT_DATA__ missing")
+              if not m:
+                  raise RuntimeError("__NEXT_DATA__ missing")
               data=json.loads(unescape(m.group(1)))
               return data["props"]["pageProps"]["firstData"]
 
-          root="lyfta-exact-probe"
+          root="lyfta-peito-19"
           os.makedirs(root,exist_ok=True)
           manifest=[]
           for ex_id,page_url in exercises:
               rec={"exerciseId":ex_id,"pageUrl":page_url,"errors":[]}
-              out=os.path.join(root,ex_id); os.makedirs(out,exist_ok=True)
+              out=os.path.join(root,ex_id)
+              os.makedirs(out,exist_ok=True)
               try:
                   first=exact_data(page_url)
                   rec["lyftaId"]=first.get("id")
                   rec["lyftaName"]=first.get("name")
                   rec["imageUrl"]=first.get("image_name")
                   rec["videoUrl"]=first.get("video_file")
+                  rec["bodyPart"]=first.get("body_part")
+                  rec["equipment"]=first.get("equipment")
+
+                  with open(os.path.join(out,"source.json"),"w",encoding="utf-8") as fp:
+                      json.dump(rec,fp,ensure_ascii=False,indent=2)
+
                   for kind,url,filename in [
                       ("image",rec["imageUrl"],"source.png"),
                       ("video",rec["videoUrl"],"source.mp4"),
@@ -69,12 +92,12 @@ jobs:
                       except Exception as e:
                           rec[kind]={"ok":False,"error":repr(e)}
                           rec["errors"].append(f"{kind}: {e!r}")
+
+                  with open(os.path.join(out,"source.json"),"w",encoding="utf-8") as fp:
+                      json.dump(rec,fp,ensure_ascii=False,indent=2)
               except Exception as e:
                   rec["errors"].append(f"page: {e!r}")
               manifest.append(rec)
-
-          with open(os.path.join(root,"manifest.json"),"w",encoding="utf-8") as f:
-              json.dump(manifest,f,ensure_ascii=False,indent=2)
 
           summary={
               "requested":len(manifest),
@@ -83,16 +106,18 @@ jobs:
               "videos_ok":sum(1 for r in manifest if r.get("video",{}).get("ok")),
               "errors":sum(len(r["errors"]) for r in manifest),
           }
+          with open(os.path.join(root,"manifest.json"),"w",encoding="utf-8") as f:
+              json.dump(manifest,f,ensure_ascii=False,indent=2)
           with open(os.path.join(root,"summary.json"),"w",encoding="utf-8") as f:
-              json.dump(summary,f,indent=2)
+              json.dump(summary,f,ensure_ascii=False,indent=2)
           print(json.dumps(summary,indent=2))
           PY
           python /tmp/lyfta/download.py
 
-      - name: Upload probe artifact
+      - name: Upload batch artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lyfta-exact-probe
-          path: lyfta-exact-probe
+          name: lyfta-peito-19
+          path: lyfta-peito-19
           if-no-files-found: error
           retention-days: 3
