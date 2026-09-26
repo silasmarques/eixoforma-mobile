@@ -1,0 +1,146 @@
+name: Lyfta Batch Download Test
+
+on:
+  push:
+    branches:
+      - ops/lyfta-batch-download
+    paths:
+      - ".github/workflows/lyfta-batch-test.yml"
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Lyfta media
+        shell: bash
+        run: |
+          mkdir -p /tmp/lyfta
+          cat > /tmp/lyfta/download.py <<'PY'
+          import json, os, re, ssl, urllib.request, urllib.parse
+          from html import unescape
+
+          exercises = [
+              ("ex_supino_reto_halteres", "https://lyfta.app/exercise/dumbbell-bench-press-84"),
+              ("ex_supino_inclinado_barra", "https://www.lyfta.app/exercise/barbell-incline-bench-press-7xv"),
+              ("ex_supino_declinado_halteres", "https://www.lyfta.app/exercise/dumbbell-decline-bench-press--7zn"),
+              ("ex_crucifixo_reto_halteres", "https://www.lyfta.app/exercise/dumbbell-fly-6ha"),
+              ("ex_crucifixo_inclinado_halteres", "https://www.lyfta.app/exercise/dumbbell-incline-fly-7b3"),
+          ]
+
+          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15"
+          ctx = ssl.create_default_context()
+
+          def fetch(url, timeout=30):
+              req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+              with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+                  return r.read(), dict(r.headers), r.geturl()
+
+          def normalize_url(raw, base):
+              raw = unescape(raw).replace("\\/", "/")
+              if raw.startswith("//"):
+                  return "https:" + raw
+              if raw.startswith("/"):
+                  p = urllib.parse.urlparse(base)
+                  return f"{p.scheme}://{p.netloc}{raw}"
+              if raw.startswith("http://") or raw.startswith("https://"):
+                  return raw
+              return urllib.parse.urljoin(base, raw)
+
+          os.makedirs("lyfta-batch-test", exist_ok=True)
+          manifest = []
+
+          for ex_id, page_url in exercises:
+              rec = {"exerciseId": ex_id, "pageUrl": page_url, "candidates": [], "downloaded": [], "errors": []}
+              outdir = os.path.join("lyfta-batch-test", ex_id)
+              os.makedirs(outdir, exist_ok=True)
+              try:
+                  html_bytes, headers, final_page = fetch(page_url)
+                  html = html_bytes.decode("utf-8", "ignore")
+                  with open(os.path.join(outdir, "page.html"), "w", encoding="utf-8") as f:
+                      f.write(html)
+
+                  patterns = [
+                      r'https?://[^"\'<> ]+(?:images/exercises|thumbnails)/[^"\'<> ]+?\.(?:png|jpe?g|webp|gif)',
+                      r'["\']([^"\']*(?:images/exercises|thumbnails)/[^"\']+?\.(?:png|jpe?g|webp|gif))["\']',
+                      r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+                      r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+                  ]
+                  found = []
+                  for pat in patterns:
+                      for m in re.finditer(pat, html, re.I):
+                          val = m.group(1) if m.groups() else m.group(0)
+                          val = normalize_url(val, final_page)
+                          if val not in found:
+                              found.append(val)
+
+                  # Derive full-size phase images from thumbnail numeric IDs.
+                  derived = []
+                  for u in list(found):
+                      m = re.search(r'/thumbnails/(\d+?)(\d{2})\.(?:jpe?g|png|webp)', u, re.I)
+                      if m:
+                          stem = m.group(1)
+                          phase = int(m.group(2))
+                          base_hosts = ["https://lyfta.app", "https://www.lyfta.app"]
+                          for host in base_hosts:
+                              for p in sorted(set([phase, 1, 2])):
+                                  derived.append(f"{host}/images/exercises/{stem}{p:02d}.png")
+                                  derived.append(f"{host}/images/exercises/{stem}{p:02d}.jpg")
+
+                  for u in derived:
+                      if u not in found:
+                          found.append(u)
+
+                  rec["candidates"] = found
+
+                  for idx, u in enumerate(found, start=1):
+                      try:
+                          body, h, final_u = fetch(u)
+                          ctype = h.get("Content-Type", "")
+                          if not ctype.lower().startswith("image/"):
+                              continue
+                          ext = {
+                              "image/png": ".png",
+                              "image/jpeg": ".jpg",
+                              "image/webp": ".webp",
+                              "image/gif": ".gif",
+                          }.get(ctype.split(";")[0].lower(), os.path.splitext(urllib.parse.urlparse(final_u).path)[1] or ".bin")
+                          fname = f"{idx:02d}{ext}"
+                          fpath = os.path.join(outdir, fname)
+                          with open(fpath, "wb") as f:
+                              f.write(body)
+                          rec["downloaded"].append({
+                              "sourceUrl": u,
+                              "finalUrl": final_u,
+                              "file": fname,
+                              "bytes": len(body),
+                              "contentType": ctype,
+                          })
+                      except Exception as e:
+                          rec["errors"].append({"url": u, "error": repr(e)})
+              except Exception as e:
+                  rec["errors"].append({"page": page_url, "error": repr(e)})
+              manifest.append(rec)
+
+          with open("lyfta-batch-test/manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+          total = sum(len(x["downloaded"]) for x in manifest)
+          print(json.dumps({"exercises": len(manifest), "downloaded_files": total}, indent=2))
+          for x in manifest:
+              print(x["exerciseId"], "downloaded=", len(x["downloaded"]), "candidates=", len(x["candidates"]), "errors=", len(x["errors"]))
+          if total == 0:
+              raise SystemExit("No image assets downloaded")
+          PY
+          python /tmp/lyfta/download.py
+
+      - name: Upload batch artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lyfta-batch-test
+          path: lyfta-batch-test
+          if-no-files-found: error
+          retention-days: 3
