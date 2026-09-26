@@ -1,4 +1,4 @@
-name: Lyfta Peito Batch 19
+name: Lyfta Peito Phase2 Probe
 
 on:
   push:
@@ -14,8 +14,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download exact Lyfta source assets
+      - name: Download phase 2 source images
         shell: bash
         run: |
           mkdir -p /tmp/lyfta
@@ -44,80 +43,41 @@ jobs:
               ("ex_chest_press_cabo","https://www.lyfta.app/exercise/cable-standing-chest-press-6ci"),
               ("ex_floor_press_halteres","https://lyfta.app/exercise/dumbbell-lying-on-floor-chest-press-8x7"),
           ]
-
-          UA="Mozilla/5.0 AppleWebKit/605.1.15 Safari/605.1.15"
-          ctx=ssl.create_default_context()
-
+          UA="Mozilla/5.0 AppleWebKit/605.1.15 Safari/605.1.15"; ctx=ssl.create_default_context()
           def fetch(url,timeout=60):
               req=urllib.request.Request(url,headers={"User-Agent":UA,"Accept":"*/*"})
               with urllib.request.urlopen(req,timeout=timeout,context=ctx) as r:
                   return r.read(),dict(r.headers),r.geturl()
-
-          def exact_data(page_url):
-              body,_,_=fetch(page_url)
-              html=body.decode("utf-8","ignore")
+          def data(page):
+              body,_,_=fetch(page); html=body.decode("utf-8","ignore")
               m=re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',html,re.S)
-              if not m:
-                  raise RuntimeError("__NEXT_DATA__ missing")
-              data=json.loads(unescape(m.group(1)))
-              return data["props"]["pageProps"]["firstData"]
-
-          root="lyfta-peito-19"
-          os.makedirs(root,exist_ok=True)
-          manifest=[]
-          for ex_id,page_url in exercises:
-              rec={"exerciseId":ex_id,"pageUrl":page_url,"errors":[]}
-              out=os.path.join(root,ex_id)
-              os.makedirs(out,exist_ok=True)
+              return json.loads(unescape(m.group(1)))["props"]["pageProps"]["firstData"]
+          root="lyfta-peito-phase2"; os.makedirs(root,exist_ok=True); manifest=[]
+          for ex,page in exercises:
+              rec={"exerciseId":ex,"pageUrl":page}
               try:
-                  first=exact_data(page_url)
-                  rec["lyftaId"]=first.get("id")
-                  rec["lyftaName"]=first.get("name")
-                  rec["imageUrl"]=first.get("image_name")
-                  rec["videoUrl"]=first.get("video_file")
-                  rec["bodyPart"]=first.get("body_part")
-                  rec["equipment"]=first.get("equipment")
-
-                  with open(os.path.join(out,"source.json"),"w",encoding="utf-8") as fp:
-                      json.dump(rec,fp,ensure_ascii=False,indent=2)
-
-                  for kind,url,filename in [
-                      ("image",rec["imageUrl"],"source.png"),
-                      ("video",rec["videoUrl"],"source.mp4"),
-                  ]:
-                      try:
-                          body,h,final=fetch(url)
-                          with open(os.path.join(out,filename),"wb") as fp: fp.write(body)
-                          rec[kind]={"ok":True,"bytes":len(body),"contentType":h.get("Content-Type",""),"finalUrl":final}
-                      except Exception as e:
-                          rec[kind]={"ok":False,"error":repr(e)}
-                          rec["errors"].append(f"{kind}: {e!r}")
-
-                  with open(os.path.join(out,"source.json"),"w",encoding="utf-8") as fp:
-                      json.dump(rec,fp,ensure_ascii=False,indent=2)
+                  first=data(page)
+                  u1=first.get("image_name")
+                  u2=u1.replace("1101","1102",1) if u1 and "1101" in u1 else None
+                  rec["image1"]=u1; rec["image2"]=u2
+                  if not u2: raise RuntimeError("cannot derive 1102")
+                  body,h,final=fetch(u2)
+                  out=os.path.join(root,ex); os.makedirs(out,exist_ok=True)
+                  with open(os.path.join(out,"source2.png"),"wb") as fp: fp.write(body)
+                  rec["ok"]=True; rec["bytes"]=len(body); rec["contentType"]=h.get("Content-Type",""); rec["finalUrl"]=final
               except Exception as e:
-                  rec["errors"].append(f"page: {e!r}")
+                  rec["ok"]=False; rec["error"]=repr(e)
               manifest.append(rec)
-
-          summary={
-              "requested":len(manifest),
-              "pages_ok":sum(1 for r in manifest if r.get("lyftaName")),
-              "images_ok":sum(1 for r in manifest if r.get("image",{}).get("ok")),
-              "videos_ok":sum(1 for r in manifest if r.get("video",{}).get("ok")),
-              "errors":sum(len(r["errors"]) for r in manifest),
-          }
-          with open(os.path.join(root,"manifest.json"),"w",encoding="utf-8") as f:
-              json.dump(manifest,f,ensure_ascii=False,indent=2)
-          with open(os.path.join(root,"summary.json"),"w",encoding="utf-8") as f:
-              json.dump(summary,f,ensure_ascii=False,indent=2)
+          summary={"requested":len(manifest),"phase2_ok":sum(1 for r in manifest if r.get("ok")),"failed":sum(1 for r in manifest if not r.get("ok"))}
+          with open(os.path.join(root,"manifest.json"),"w",encoding="utf-8") as f: json.dump(manifest,f,ensure_ascii=False,indent=2)
+          with open(os.path.join(root,"summary.json"),"w",encoding="utf-8") as f: json.dump(summary,f,indent=2)
           print(json.dumps(summary,indent=2))
           PY
           python /tmp/lyfta/download.py
-
-      - name: Upload batch artifact
+      - name: Upload phase 2 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lyfta-peito-19
-          path: lyfta-peito-19
+          name: lyfta-peito-phase2
+          path: lyfta-peito-phase2
           if-no-files-found: error
           retention-days: 3
