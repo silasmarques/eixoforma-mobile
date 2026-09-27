@@ -1,4 +1,4 @@
-name: Lyfta Costas Missing Phase
+name: Lyfta Ombros Batch 24
 
 on:
   push:
@@ -14,31 +14,115 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      - name: Download missing second phase
+
+      - name: Download exact Lyfta source assets
         shell: bash
         run: |
-          python - <<'PY'
-          import os, ssl, urllib.request, json
-          url="https://apilyfta.com/static/GymvisualPNG/12351102-Lever-One-Arm-Seated-Row-(Seated-row-machine)_Back_small.png"
-          out="lyfta-costas-phase2/ex_remada_unilateral_maquina"
-          os.makedirs(out,exist_ok=True)
-          req=urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0","Accept":"image/*"})
-          try:
-              with urllib.request.urlopen(req,timeout=60,context=ssl.create_default_context()) as r:
-                  body=r.read()
-                  ctype=r.headers.get("Content-Type","")
-              with open(out+"/source2.png","wb") as f: f.write(body)
-              res={"ok":True,"url":url,"bytes":len(body),"contentType":ctype}
-          except Exception as e:
-              res={"ok":False,"url":url,"error":repr(e)}
-          with open("lyfta-costas-phase2/result.json","w",encoding="utf-8") as f:
-              json.dump(res,f,indent=2)
-          print(json.dumps(res,indent=2))
+          mkdir -p /tmp/lyfta
+          cat > /tmp/lyfta/download.py <<'PY'
+          import json, os, re, ssl, urllib.request
+          from html import unescape
+
+          exercises = [
+            ("ex_elevacao_frontal_barra","https://www.lyfta.app/exercise/barbell-front-raise-7a3"),
+            ("ex_elevacao_frontal_polia","https://www.lyfta.app/exercise/cable-front-raise--7tj"),
+            ("ex_elevacao_frontal_unilateral_polia","https://www.lyfta.app/exercise/cable-one-arm-front-raise-868"),
+            ("ex_elevacao_lateral_polia","https://www.lyfta.app/exercise/cable-lateral-raise-644"),
+            ("ex_elevacao_lateral_unilateral_polia","https://www.lyfta.app/exercise/one-arm-lateral-raise-7g"),
+            ("ex_elevacao_lateral_maquina","https://lyfta.app/exercise/lever-lateral-raise-8ve"),
+            ("ex_desenvolvimento_halteres_sentado","https://lyfta.app/exercise/dumbbell-seated-shoulder-press-6kp"),
+            ("ex_desenvolvimento_halteres_em_pe","https://lyfta.app/exercise/dumbbell-standing-overhead-press-6l0"),
+            ("ex_arnold_press","https://www.lyfta.app/exercise/arnold-press-83"),
+            ("ex_remada_alta_barra","https://www.lyfta.app/exercise/barbell-upright-row--62t"),
+            ("ex_remada_alta_halteres","https://www.lyfta.app/exercise/dumbbell-upright-row--8qm"),
+            ("ex_remada_alta_cabo","https://www.lyfta.app/exercise/cable-upright-row-6g0"),
+            ("ex_crucifixo_inverso_halteres","https://www.lyfta.app/exercise/dumbbell-reverse-fly-6jd"),
+            ("ex_crucifixo_inverso_banco_inclinado","https://www.lyfta.app/exercise/dumbbell-incline-alternate-reverse-fly-8xx"),
+            ("ex_rotacao_externa_ombro_polia","https://www.lyfta.app/exercise/cable-standing-shoulder-external-rotation-6fz"),
+            ("ex_rotacao_interna_ombro_polia","https://www.lyfta.app/exercise/cable-seated-shoulder-internal-rotation-6fg"),
+            ("ex_elevacao_y_banco_inclinado","https://www.lyfta.app/exercise/dumbbell-incline-y-raise-8to"),
+            ("ex_elevacao_lateral_inclinada","https://www.lyfta.app/exercise/dumbbell-incline-one-arm-lateral-raise-89t"),
+            ("ex_landmine_press_unilateral","https://www.lyfta.app/exercise/landmine-kneeling-one-arm-shoulder-press-8t8"),
+            ("ex_press_militar_smith","https://lyfta.app/exercise/smith-shoulder-press-27"),
+            ("ex_press_ombros_convergente","https://lyfta.app/exercise/lever-seated-hammer-grip-shoulder-press-83t"),
+            ("ex_desenvolvimento_unilateral_maquina","https://www.lyfta.app/exercise/lever-one-arm-shoulder-press-6pu"),
+            ("ex_elevacao_lateral_deitado_cabo","https://www.lyfta.app/exercise/cable-side-lying-lateral-raise-82r"),
+            ("ex_shoulder_press_kettlebell","https://www.lyfta.app/exercise/kettlebell-half-kneeling-shoulder-press-82b"),
+          ]
+
+          UA="Mozilla/5.0 AppleWebKit/605.1.15 Safari/605.1.15"
+          ctx=ssl.create_default_context()
+
+          def fetch(url,timeout=60):
+              req=urllib.request.Request(url,headers={"User-Agent":UA,"Accept":"*/*"})
+              with urllib.request.urlopen(req,timeout=timeout,context=ctx) as r:
+                  return r.read(),dict(r.headers),r.geturl()
+
+          def exact_data(page_url):
+              body,_,_=fetch(page_url)
+              html=body.decode("utf-8","ignore")
+              m=re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',html,re.S)
+              if not m: raise RuntimeError("__NEXT_DATA__ missing")
+              data=json.loads(unescape(m.group(1)))
+              return data["props"]["pageProps"]["firstData"]
+
+          root="lyfta-ombros-24"
+          os.makedirs(root,exist_ok=True)
+          manifest=[]
+          for ex_id,page_url in exercises:
+              rec={"exerciseId":ex_id,"pageUrl":page_url,"errors":[]}
+              out=os.path.join(root,ex_id); os.makedirs(out,exist_ok=True)
+              try:
+                  first=exact_data(page_url)
+                  rec["lyftaId"]=first.get("id")
+                  rec["lyftaName"]=first.get("name")
+                  rec["imageUrl"]=first.get("image_name")
+                  rec["videoUrl"]=first.get("video_file")
+                  if rec["imageUrl"]:
+                      body,h,final=fetch(rec["imageUrl"])
+                      with open(os.path.join(out,"source.png"),"wb") as fp: fp.write(body)
+                      rec["imageOk"]=True
+                  else:
+                      rec["imageOk"]=False
+                  if rec["videoUrl"]:
+                      try:
+                          body,h,final=fetch(rec["videoUrl"])
+                          with open(os.path.join(out,"source.mp4"),"wb") as fp: fp.write(body)
+                          rec["videoOk"]=True
+                      except Exception as e:
+                          rec["videoOk"]=False
+                          rec["videoError"]=repr(e)
+                  else:
+                      rec["videoOk"]=False
+                  with open(os.path.join(out,"source.json"),"w",encoding="utf-8") as fp:
+                      json.dump({
+                        "exerciseId":ex_id,"pageUrl":page_url,"lyftaId":rec.get("lyftaId"),
+                        "lyftaName":rec.get("lyftaName"),"imageUrl":rec.get("imageUrl"),
+                        "videoUrl":rec.get("videoUrl"),"origin":"lyfta"
+                      },fp,ensure_ascii=False,indent=2)
+              except Exception as e:
+                  rec["errors"].append(repr(e))
+              manifest.append(rec)
+
+          summary={
+              "requested":len(manifest),
+              "pages_ok":sum(1 for r in manifest if r.get("lyftaName")),
+              "images_ok":sum(1 for r in manifest if r.get("imageOk")),
+              "videos_ok":sum(1 for r in manifest if r.get("videoOk")),
+              "with_errors":sum(1 for r in manifest if r.get("errors")),
+          }
+          with open(os.path.join(root,"manifest.json"),"w",encoding="utf-8") as f:
+              json.dump(manifest,f,ensure_ascii=False,indent=2)
+          with open(os.path.join(root,"summary.json"),"w",encoding="utf-8") as f:
+              json.dump(summary,f,ensure_ascii=False,indent=2)
+          print(json.dumps(summary,indent=2))
           PY
-      - name: Upload artifact
+          python /tmp/lyfta/download.py
+
+      - name: Upload batch artifact
         uses: actions/upload-artifact@v4
         with:
-          name: lyfta-costas-phase2
-          path: lyfta-costas-phase2
+          name: lyfta-ombros-24
+          path: lyfta-ombros-24
           if-no-files-found: error
           retention-days: 3
